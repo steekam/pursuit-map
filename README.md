@@ -18,6 +18,8 @@ pursuitmap search za --query "network modernization" --vertical ict --limit 20 -
 
 The raw artifact is kept under `data/raw/` with a SHA-256 manifest. Each normalization run writes canonical Parquet under `data/parquet/south_africa/<normalize-run-id>/` and DuckDB under its matching run directory. Reports, derived marts, and run manifests are also physically versioned; compatibility files at the data root point to the latest result. Generated data is gitignored. The latest canonical run is selected by `data/working/south_africa/normalization_manifest.json`.
 
+Cross-session operating rules live in [`AGENTS.md`](AGENTS.md). The machine-readable pipeline contract is [`config/pipeline-contract.json`](config/pipeline-contract.json); tests enforce its required layers, operations, determinism, and boundaries.
+
 ## Current scope
 
 This repository currently establishes the procurement domain map, source ingestion, canonical lifecycle tables, deterministic identity auditing, descriptive marts, and explainable ICT retrieval. It does not implement fuzzy entity resolution, document downloading, semantic embeddings, lead scoring, a hosted database, or a product UI.

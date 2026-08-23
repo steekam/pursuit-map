@@ -1,0 +1,69 @@
+{
+  "contract_version": "phase1.5.1",
+  "source": {
+    "baseline": "OCP South Africa full JSONL snapshot",
+    "raw_artifact_immutable": true,
+    "required_manifest_fields": [
+      "source_url",
+      "retrieved_at",
+      "bytes",
+      "sha256",
+      "format"
+    ]
+  },
+  "layers": [
+    "raw_source_truth",
+    "canonical_facts",
+    "derived_observations",
+    "intelligence_outputs"
+  ],
+  "required_provenance": [
+    "source_snapshot_sha256",
+    "run_id",
+    "generated_at"
+  ],
+  "operations": {
+    "normalize": {
+      "input": "raw_source_truth",
+      "outputs": ["canonical_facts"],
+      "versioned_output": true,
+      "manifest": true,
+      "deterministic": true
+    },
+    "verify": {
+      "input": "canonical_facts",
+      "outputs": ["verification_report"],
+      "manifest": false,
+      "deterministic": true
+    },
+    "profile": {
+      "input": "canonical_facts",
+      "outputs": ["quality_report"],
+      "versioned_output": true,
+      "manifest": true,
+      "deterministic": true
+    },
+    "materialize": {
+      "input": "canonical_facts",
+      "outputs": ["derived_observations", "intelligence_outputs"],
+      "versioned_output": true,
+      "manifest": true,
+      "deterministic": true
+    },
+    "search": {
+      "input": "canonical_facts",
+      "outputs": ["intelligence_outputs"],
+      "versioned_output": true,
+      "manifest": true,
+      "deterministic": true,
+      "evidence_required": true
+    }
+  },
+  "boundaries": {
+    "entity_resolution": "deterministic_audit_only",
+    "documents": "metadata_and_urls_only",
+    "opaque_models": false,
+    "currency_conversion": false,
+    "prediction_claims": false
+  }
+}

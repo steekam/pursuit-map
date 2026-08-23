@@ -10,6 +10,7 @@ from .normalize import normalize
 from .report import create_report
 from .search import search
 from .source import ingest
+from .verification import verify_outputs
 
 
 def main() -> None:
@@ -47,6 +48,9 @@ def main() -> None:
     evaluation_parser = commands.add_parser("evaluate")
     evaluation_parser.add_argument("country", choices=["za"])
 
+    verify_parser = commands.add_parser("verify")
+    verify_parser.add_argument("country", choices=["za"])
+
     args = parser.parse_args()
     if args.command == "ingest":
         result = ingest(args.url or None, force=args.force, local_path=args.local_path) if args.url else ingest(force=args.force, local_path=args.local_path)
@@ -58,6 +62,8 @@ def main() -> None:
         result = materialize()
     elif args.command == "evaluate":
         result = evaluate_baselines()
+    elif args.command == "verify":
+        result = verify_outputs()
     else:
         result = search(args.query, limit=args.limit, taxonomy_path=args.taxonomy_path, as_of=args.as_of)
     print(json.dumps(result, indent=2, default=str))
