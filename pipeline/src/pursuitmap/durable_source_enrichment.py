@@ -114,7 +114,7 @@ class RateLimiter:
 
     def success(self) -> None:
         self.consecutive_429 = 0
-        self.interval = max(self.base_interval, self.interval * 0.95)
+        self.interval = max(self.base_interval, self.interval * 0.5)
 
     def recover_after_circuit(self) -> None:
         self.consecutive_429 = 0
