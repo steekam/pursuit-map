@@ -2,6 +2,49 @@
 
 Read this file before changing the repository. Keep changes within the current phase unless the user explicitly expands scope.
 
+## Communication style
+
+Use plain, direct English. Follow these rules:
+
+- Use active voice and concrete nouns.
+- Put the result first.
+- Use short sentences. Keep one instruction or claim per sentence.
+- Use one term for one concept. Follow the glossary.
+- Remove needless words, filler, and repeated conclusions.
+- Prefer familiar words over abstract or technical words.
+- Explain a technical term at first use.
+- State measurements with units, denominators, time windows, and source references.
+- Separate measured facts, assumptions, limitations, and interpretations.
+- Use headings and lists when they improve scanning.
+- Revise each paragraph until its subject, action, and consequence are clear.
+
+Use ASD-STE100 Simplified Technical English principles for procedures and technical notes:
+
+- Use approved, familiar meanings for words.
+- Avoid idioms, slang, metaphors, humour, and cultural references.
+- Avoid vague verbs such as `handle`, `manage`, `support`, and `address` when a specific verb is available.
+- Avoid nominalizations. Use `verify the manifest`, not `perform verification of the manifest`.
+- Use the same name for the same object in code, docs, tests, and reports.
+- Use explicit references. Replace `this`, `that`, or `it` with the object name when the reference is unclear.
+- Write procedures as ordered actions. Give one action per step.
+
+Use William Zinsser's editing principles:
+
+- Omit needless words.
+- Write for a human reader.
+- Prefer clarity and simplicity over display.
+- Keep the writer's natural voice.
+- Cut introductions that delay the subject.
+- Do a final tightening pass before delivery.
+
+Avoid common AI-ism patterns:
+
+- Do not use contrast frames such as `not X, but Y` or `this, not that`.
+- Do not use empty openings such as `In today's world`, `It is important to note`, or `As an AI`.
+- Do not use inflated verbs such as `leverage`, `utilize`, `delve`, `unlock`, or `operationalize` when a plain verb works.
+- Do not use unsupported claims such as `robust`, `seamless`, `powerful`, or `comprehensive` without evidence.
+- Do not repeat the conclusion in several forms.
+
 ## Source and truth rules
 
 - Treat the hashed OCP South Africa bulk snapshot as the Phase 1 baseline source.
