@@ -91,6 +91,7 @@ class RateLimiter:
         self.randomizer = randomizer
         self.next_at = 0.0
         self.consecutive_429 = 0
+        self.circuit_open = False
         self._lock = threading.Lock()
 
     def reserve(self) -> float:
@@ -290,7 +291,7 @@ def _process_detail_batch(connection, cache, jobs: list[tuple], run: str, config
                 limiter.consecutive_429 += 1
                 limiter.slow_down()
                 if limiter.consecutive_429 >= config.circuit_breaker_429_count:
-                    sleeper(config.circuit_breaker_pause_seconds)
+                    limiter.circuit_open = True
                     limiter.recover_after_circuit()
             retry_after = headers.get("Retry-After")
             delay = min(config.max_backoff_seconds, float(retry_after) if retry_after and retry_after.isdigit() else 2 ** attempt) + randomizer() * config.jitter_seconds
@@ -504,6 +505,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     limiter = RateLimiter(config.refill_rate_per_second, config.jitter_seconds, sleeper=sleep, randomizer=randomizer)
     detail_batches = 0
     paused_network = False
+    paused_rate_limit = False
     while True:
         job = connection.execute("SELECT * FROM request_jobs WHERE run_id = ? AND status IN ('pending','retryable_failed') AND next_attempt_at <= ? ORDER BY CASE WHEN job_type = 'list' THEN 0 ELSE 1 END, created_at, job_id LIMIT 1", [run, _now()]).fetchone()
         if job is None:
@@ -523,6 +525,10 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
             if network_errors >= max(2, len(batch) - 1):
                 paused_network = True
                 _write_heartbeat(output_root, run, connection, phase="paused_network", batch=detail_batches)
+                break
+            if limiter.circuit_open:
+                paused_rate_limit = True
+                _write_heartbeat(output_root, run, connection, phase="paused_rate_limit", batch=detail_batches)
                 break
             continue
         job_id, _, job_type, endpoint, url, params_json, expected_ocid, external_id, _, attempts, *_ = job
@@ -565,8 +571,11 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
                     limiter.consecutive_429 += 1
                     limiter.slow_down()
                     if limiter.consecutive_429 >= config.circuit_breaker_429_count:
-                        sleep(config.circuit_breaker_pause_seconds)
+                        limiter.circuit_open = True
                         limiter.recover_after_circuit()
+                        paused_rate_limit = True
+                        _write_heartbeat(output_root, run, connection, phase="paused_rate_limit", batch=detail_batches)
+                        break
                 retry_after = headers.get("Retry-After")
                 delay = min(config.max_backoff_seconds, float(retry_after) if retry_after and retry_after.isdigit() else 2 ** attempt) + randomizer() * config.jitter_seconds
                 connection.execute("UPDATE request_jobs SET status = 'retryable_failed', next_attempt_at = ?, http_status = ?, error_class = ?, error_message = ?, response_hash = ?, response_path = ?, updated_at = ? WHERE job_id = ?", [_now() + delay, status, error_class, "retryable HTTP response", digest, path, utc_now(), job_id])
@@ -585,7 +594,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     materialized = _materialize(connection, run, output_root)
     eligibility = _materialize_eligibility(connection, run, config)
     finished_at = utc_now()
-    final_status = "paused_network" if paused_network else "complete"
+    final_status = "paused_network" if paused_network else "paused_rate_limit" if paused_rate_limit else "complete"
     connection.execute("UPDATE run_metadata SET status = ?, finished_at = ? WHERE run_id = ?", [final_status, finished_at, run])
     _write_heartbeat(output_root, run, connection, phase=final_status, batch=detail_batches)
     counts = {row[0]: row[1] for row in connection.execute("SELECT status, count(*) FROM request_jobs WHERE run_id = ? GROUP BY 1", [run]).fetchall()}
@@ -603,7 +612,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     response_count = connection.execute("SELECT count(*) FROM source_responses WHERE run_id = ?", [run]).fetchone()[0]
     cache_hits = connection.execute("SELECT count(*) FROM request_jobs WHERE run_id = ? AND cache_hit = TRUE", [run]).fetchone()[0]
     cohort_coverage = _cohort_coverage(connection, run)
-    report = {"run_id": run, "country": country, "source_snapshot_sha256": source_sha, "source": config.source, "source_version": config.source_version, "api_version": config.api_version, "rate_policy": {"concurrency": config.concurrency, "refill_rate_per_second": config.refill_rate_per_second, "jitter_seconds": config.jitter_seconds}, "job_counts": {key: counts.get(key, 0) for key in ("succeeded", "pending", "retryable_failed", "permanent_failed")}, "mapping_counts": mapping_counts, "mapping_total": sum(mapping_counts.values()), "detail_jobs": detail_total, "detail_match_rate": materialized["rows"] / detail_total if detail_total else 0, "field_coverage": field_coverage, "cohort_coverage": cohort_coverage, "http_status_counts": status_counts, "accepted_detail_rows": materialized["rows"], "response_count": response_count, "network_requests": response_count - cache_hits, "cache_hits": cache_hits, "cache_path": str(_cache_path(roots)), "duplicate_mapping_rows": connection.execute("SELECT count(*) - count(DISTINCT ocid || '|' || external_id) FROM source_mappings WHERE run_id = ?", [run]).fetchone()[0], "eligibility": eligibility, "average_wait_seconds": wait_stats[0], "p95_wait_seconds": wait_stats[1], "effective_request_rate_per_second": response_count / elapsed_seconds if elapsed_seconds else 0, "rate_limit_events": wait_stats[2], "elapsed_seconds": elapsed_seconds, "output_root": str(output_root), "ledger": str(ledger_path), "status": final_status if paused_network else ("pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn")}
+    report = {"run_id": run, "country": country, "source_snapshot_sha256": source_sha, "source": config.source, "source_version": config.source_version, "api_version": config.api_version, "rate_policy": {"concurrency": config.concurrency, "refill_rate_per_second": config.refill_rate_per_second, "jitter_seconds": config.jitter_seconds}, "job_counts": {key: counts.get(key, 0) for key in ("succeeded", "pending", "retryable_failed", "permanent_failed")}, "mapping_counts": mapping_counts, "mapping_total": sum(mapping_counts.values()), "detail_jobs": detail_total, "detail_match_rate": materialized["rows"] / detail_total if detail_total else 0, "field_coverage": field_coverage, "cohort_coverage": cohort_coverage, "http_status_counts": status_counts, "accepted_detail_rows": materialized["rows"], "response_count": response_count, "network_requests": response_count - cache_hits, "cache_hits": cache_hits, "cache_path": str(_cache_path(roots)), "duplicate_mapping_rows": connection.execute("SELECT count(*) - count(DISTINCT ocid || '|' || external_id) FROM source_mappings WHERE run_id = ?", [run]).fetchone()[0], "eligibility": eligibility, "average_wait_seconds": wait_stats[0], "p95_wait_seconds": wait_stats[1], "effective_request_rate_per_second": response_count / elapsed_seconds if elapsed_seconds else 0, "rate_limit_events": wait_stats[2], "elapsed_seconds": elapsed_seconds, "output_root": str(output_root), "ledger": str(ledger_path), "status": final_status if paused_network or paused_rate_limit else ("pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn")}
     write_run_manifest("source-enrich", source_sha, {"country": country, "report": report, "ledger": str(ledger_path), "output_root": str(output_root)}, run=run, working_root=roots.working)
     (output_root / "source_enrichment_execution_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     (output_root / "source_enrichment_execution_report.md").write_text(render_report(report), encoding="utf-8")
