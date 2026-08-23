@@ -83,7 +83,8 @@ def _idempotency(*parts: object) -> str:
 
 class RateLimiter:
     def __init__(self, rate: float, jitter: float, *, clock: Callable[[], float] = _now, sleeper: Callable[[float], None] = time.sleep, randomizer: Callable[[], float] = random.random) -> None:
-        self.interval = 1.0 / rate
+        self.base_interval = 1.0 / rate
+        self.interval = self.base_interval
         self.jitter = jitter
         self.clock = clock
         self.sleeper = sleeper
@@ -109,6 +110,14 @@ class RateLimiter:
 
     def slow_down(self, factor: float = 2.0) -> None:
         self.interval = min(60.0, self.interval * factor)
+
+    def success(self) -> None:
+        self.consecutive_429 = 0
+        self.interval = max(self.base_interval, self.interval * 0.95)
+
+    def recover_after_circuit(self) -> None:
+        self.consecutive_429 = 0
+        self.interval = max(self.base_interval * 2.0, self.interval / 2.0)
 
 
 def classify_status(status: int | None, error: Exception | None, retry_statuses: tuple[int, ...]) -> tuple[bool, str]:
@@ -270,7 +279,7 @@ def _process_detail_batch(connection, cache, jobs: list[tuple], run: str, config
                 _record_event(connection, job_id, attempt, "permanent_failed", elapsed, status, False, "validation", str(error_value), digest)
                 continue
             connection.execute("UPDATE request_jobs SET status = 'succeeded', observed_ocid = ?, updated_at = ? WHERE job_id = ?", [observed_ocid, utc_now(), job_id])
-            limiter.consecutive_429 = 0
+            limiter.success()
             if not cache_hit:
                 _cache_store(cache, "detail", url, params_json, expected_ocid, status, headers.get("Content-Type"), digest, path, observed_ocid, run)
             _record_event(connection, job_id, attempt, "cache_hit" if cache_hit else "succeeded", elapsed, status, False, None, None, digest)
@@ -282,7 +291,7 @@ def _process_detail_batch(connection, cache, jobs: list[tuple], run: str, config
                 limiter.slow_down()
                 if limiter.consecutive_429 >= config.circuit_breaker_429_count:
                     sleeper(config.circuit_breaker_pause_seconds)
-                    limiter.consecutive_429 = 0
+                    limiter.recover_after_circuit()
             retry_after = headers.get("Retry-After")
             delay = min(config.max_backoff_seconds, float(retry_after) if retry_after and retry_after.isdigit() else 2 ** attempt) + randomizer() * config.jitter_seconds
             state = "retryable_failed"
@@ -493,7 +502,6 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
         started_at = utc_now()
         connection.execute("UPDATE run_metadata SET started_at = ? WHERE run_id = ?", [started_at, run])
     limiter = RateLimiter(config.refill_rate_per_second, config.jitter_seconds, sleeper=sleep, randomizer=randomizer)
-    consecutive_429 = 0
     detail_batches = 0
     paused_network = False
     while True:
@@ -549,16 +557,16 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
                     detail_limit = connection.execute("SELECT detail_limit FROM run_metadata WHERE run_id = ?", [run]).fetchone()[0]
                     _list_success(connection, run, job, payload, digest, config, detail_limit)
                     _write_heartbeat(output_root, run, connection, phase="mapping")
-                consecutive_429 = 0
+                limiter.success()
                 continue
             retryable, error_class = classify_status(status, None, config.retry_statuses)
             if retryable and attempt < config.max_attempts:
                 if status == 429:
-                    consecutive_429 += 1
+                    limiter.consecutive_429 += 1
                     limiter.slow_down()
-                    if consecutive_429 >= config.circuit_breaker_429_count:
+                    if limiter.consecutive_429 >= config.circuit_breaker_429_count:
                         sleep(config.circuit_breaker_pause_seconds)
-                        consecutive_429 = 0
+                        limiter.recover_after_circuit()
                 retry_after = headers.get("Retry-After")
                 delay = min(config.max_backoff_seconds, float(retry_after) if retry_after and retry_after.isdigit() else 2 ** attempt) + randomizer() * config.jitter_seconds
                 connection.execute("UPDATE request_jobs SET status = 'retryable_failed', next_attempt_at = ?, http_status = ?, error_class = ?, error_message = ?, response_hash = ?, response_path = ?, updated_at = ? WHERE job_id = ?", [_now() + delay, status, error_class, "retryable HTTP response", digest, path, utc_now(), job_id])

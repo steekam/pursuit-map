@@ -18,6 +18,16 @@ def test_rate_limiter_uses_injected_clock_and_jitter():
     assert sleeps == [0.5, 1.0]
 
 
+def test_rate_limiter_recovers_after_rate_limit_pause():
+    limiter = engine.RateLimiter(1.0, 0.0)
+    limiter.slow_down()
+    limiter.slow_down()
+    limiter.recover_after_circuit()
+    assert limiter.interval == 2.0
+    limiter.success()
+    assert 1.0 <= limiter.interval < 2.0
+
+
 def test_retry_classification():
     assert engine.classify_status(429, None, (429,))[0] is True
     assert engine.classify_status(404, None, (429,))[0] is False
