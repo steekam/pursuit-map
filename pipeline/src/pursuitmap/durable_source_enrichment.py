@@ -143,6 +143,7 @@ def _ledger_path(roots, run: str) -> Path:
 
 def _write_heartbeat(output_root: Path, run: str, connection, *, phase: str, batch: int = 0) -> dict:
     counts = {row[0]: row[1] for row in connection.execute("SELECT status, count(*) FROM request_jobs WHERE run_id = ? GROUP BY 1", [run]).fetchall()}
+    errors = {row[0]: row[1] for row in connection.execute("SELECT error_class, count(*) FROM request_jobs WHERE run_id = ? AND error_class IS NOT NULL GROUP BY 1", [run]).fetchall()}
     mappings = connection.execute("SELECT count(*) FROM source_mappings WHERE run_id = ?", [run]).fetchone()[0]
     accepted = connection.execute("SELECT count(*) FROM request_jobs WHERE run_id = ? AND job_type = 'detail' AND status = 'succeeded'", [run]).fetchone()[0]
     heartbeat = {
@@ -152,6 +153,7 @@ def _write_heartbeat(output_root: Path, run: str, connection, *, phase: str, bat
         "batch": batch,
         "updated_at": utc_now(),
         "job_counts": counts,
+        "error_counts": errors,
         "mapping_count": mappings,
         "accepted_detail_rows": accepted,
         "materialization": str(output_root / "source_enrichment.parquet"),
