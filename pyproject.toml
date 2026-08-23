@@ -11,10 +11,13 @@ dependencies = [
   "duckdb>=1.1,<2",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
   "pytest>=8,<9",
 ]
+
+[tool.uv]
+default-groups = ["dev"]
 
 [project.scripts]
 pursuitmap = "pursuitmap.cli:main"

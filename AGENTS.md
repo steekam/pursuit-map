@@ -23,19 +23,19 @@ Read this file before changing the repository. Keep changes within the current p
 
 1. Read the relevant ADR and contract entry.
 2. Make one cohesive change.
-3. Run `python -m pytest -q`, `python -m compileall -q src tests`, and `git diff --check`.
+3. Run `uv run pytest -q`, `uv run python -m compileall -q src tests`, and `git diff --check`.
 4. Run the affected CLI command against a fixture, then the current snapshot when practical.
 5. Commit one logical change with an imperative message. Do not use checkpoint commits.
 
 ## Useful commands
 
 ```bash
-pursuitmap ingest za
-pursuitmap normalize za
-pursuitmap verify za
-pursuitmap profile za
-pursuitmap materialize za
-pursuitmap search za --query "network modernization" --vertical ict --format json
+uv run pursuitmap ingest za
+uv run pursuitmap normalize za
+uv run pursuitmap verify za
+uv run pursuitmap profile za
+uv run pursuitmap materialize za
+uv run pursuitmap search za --query "network modernization" --vertical ict --format json
 ```
 
 The contract is machine-readable in `config/pipeline-contract.json`. The canonical schema and decision history live under `docs/`.

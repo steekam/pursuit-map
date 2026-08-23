@@ -5,16 +5,17 @@ PursuitMap turns public procurement data into evidence-backed commercial lead di
 ## Local workflow
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
+uv venv --python 3.12
+uv sync
 
-pursuitmap ingest za
-pursuitmap normalize za
-pursuitmap profile za
-pursuitmap materialize za
-pursuitmap search za --query "network modernization" --vertical ict --limit 20 --format json
+uv run pursuitmap ingest za
+uv run pursuitmap normalize za
+uv run pursuitmap profile za
+uv run pursuitmap materialize za
+uv run pursuitmap search za --query "network modernization" --vertical ict --limit 20 --format json
 ```
+
+The project environment is `.venv/` at the repository root. `uv.lock` pins the reproducible dependency resolution; use `uv run ...` so commands use that environment without relying on a global virtualenv.
 
 The raw artifact is kept under `data/raw/` with a SHA-256 manifest. Each normalization run writes canonical Parquet under `data/parquet/south_africa/<normalize-run-id>/` and DuckDB under its matching run directory. Reports, derived marts, and run manifests are also physically versioned; compatibility files at the data root point to the latest result. Generated data is gitignored. The latest canonical run is selected by `data/working/south_africa/normalization_manifest.json`.
 
