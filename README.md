@@ -19,7 +19,7 @@ uv run pursuitmap ingest ke
 uv run pursuitmap profile ke
 ```
 
-The project environment is `.venv/` at the repository root. `uv.lock` records the dependency resolution. Run commands with `uv run`.
+The project environment is `.venv/` at the repository root. The project pins UV 0.10.6 in `.mise.toml`. `uv.lock` records the dependency resolution. Run commands with `uv run`.
 
 The repository is a monorepo. Python data production lives under `pipeline/`. Shared project assets remain at the root. Future serving and product applications will become separate workspace members when they contain working code.
 
