@@ -27,6 +27,9 @@ LEDGER_SCHEMA = {
     "source_mappings": "mapping_id BIGINT, run_id VARCHAR, list_endpoint VARCHAR, list_page INTEGER, list_response_hash VARCHAR, external_id VARCHAR, ocid VARCHAR, tender_ref VARCHAR, canonical_match BOOLEAN, created_at VARCHAR",
     "source_responses": "response_id BIGINT, run_id VARCHAR, job_id VARCHAR, url VARCHAR, retrieved_at VARCHAR, http_status INTEGER, content_type VARCHAR, response_hash VARCHAR, response_path VARCHAR, response_bytes BIGINT",
 }
+CACHE_SCHEMA = {
+    "cached_responses": "cache_key VARCHAR PRIMARY KEY, job_type VARCHAR, url VARCHAR, params_json VARCHAR, expected_ocid VARCHAR, http_status INTEGER, content_type VARCHAR, response_hash VARCHAR, response_path VARCHAR, observed_ocid VARCHAR, source_run_id VARCHAR, cached_at VARCHAR",
+}
 
 
 @dataclass(frozen=True)
@@ -110,12 +113,13 @@ def _create_ledger(connection: duckdb.DuckDBPyConnection) -> None:
         connection.execute(f'CREATE TABLE IF NOT EXISTS "{table}" ({definition})')
     connection.execute("ALTER TABLE run_metadata ADD COLUMN IF NOT EXISTS started_at VARCHAR")
     connection.execute("ALTER TABLE run_metadata ADD COLUMN IF NOT EXISTS finished_at VARCHAR")
+    connection.execute("ALTER TABLE request_jobs ADD COLUMN IF NOT EXISTS cache_hit BOOLEAN DEFAULT FALSE")
 
 
 def _insert_job(connection: duckdb.DuckDBPyConnection, run: str, job_type: str, endpoint: str, url: str, params: dict, expected_ocid: str | None = None, external_id: str | None = None) -> None:
     job_id = _idempotency(run, job_type, endpoint, json.dumps(params, sort_keys=True), expected_ocid, external_id)
     now = utc_now()
-    connection.execute("""INSERT INTO request_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?) ON CONFLICT (job_id) DO NOTHING""", [job_id, run, job_type, endpoint, url, json.dumps(params, sort_keys=True), expected_ocid, external_id, now, now])
+    connection.execute("""INSERT INTO request_jobs (job_id, run_id, job_type, endpoint, url, params_json, expected_ocid, external_id, status, attempts, next_attempt_at, lease_owner, lease_until, http_status, error_class, error_message, response_hash, response_path, observed_ocid, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?) ON CONFLICT (job_id) DO NOTHING""", [job_id, run, job_type, endpoint, url, json.dumps(params, sort_keys=True), expected_ocid, external_id, now, now])
 
 
 def _ledger_path(roots, run: str) -> Path:
@@ -172,6 +176,31 @@ def _create_sequences(connection) -> None:
     connection.execute("CREATE SEQUENCE IF NOT EXISTS event_seq START 1")
     connection.execute("CREATE SEQUENCE IF NOT EXISTS response_seq START 1")
     connection.execute("CREATE SEQUENCE IF NOT EXISTS mapping_seq START 1")
+
+
+def _cache_path(roots) -> Path:
+    roots.enriched.mkdir(parents=True, exist_ok=True)
+    return roots.enriched / "source-cache.duckdb"
+
+
+def _cache_connection(roots) -> duckdb.DuckDBPyConnection:
+    connection = duckdb.connect(str(_cache_path(roots)))
+    for table, definition in CACHE_SCHEMA.items():
+        connection.execute(f'CREATE TABLE IF NOT EXISTS "{table}" ({definition})')
+    return connection
+
+
+def _cache_key(job_type: str, url: str, params_json: str, expected_ocid: str | None) -> str:
+    return _sha256("|".join((job_type, url, params_json, expected_ocid or "")).encode())
+
+
+def _cache_lookup(cache, job_type: str, url: str, params_json: str, expected_ocid: str | None):
+    key = _cache_key(job_type, url, params_json, expected_ocid)
+    return cache.execute("SELECT cache_key, http_status, content_type, response_hash, response_path, observed_ocid, source_run_id FROM cached_responses WHERE cache_key = ? AND http_status = 200", [key]).fetchone()
+
+
+def _cache_store(cache, job_type: str, url: str, params_json: str, expected_ocid: str | None, status: int, content_type: str | None, response_hash: str, response_path: str, observed_ocid: str | None, source_run_id: str) -> None:
+    cache.execute("INSERT OR REPLACE INTO cached_responses VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [_cache_key(job_type, url, params_json, expected_ocid), job_type, url, params_json, expected_ocid, status, content_type, response_hash, response_path, observed_ocid, source_run_id, utc_now()])
 
 
 def _list_success(connection, run: str, job: tuple, payload: bytes, response_hash: str, config: EngineConfig, detail_limit: int) -> None:
@@ -236,6 +265,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     connection = duckdb.connect(str(ledger_path))
     _create_ledger(connection)
     _create_sequences(connection)
+    cache = _cache_connection(roots)
     connection.execute("UPDATE run_metadata SET status = 'running', resume_count = resume_count + 1 WHERE run_id = ?", [run])
     started_at = connection.execute("SELECT started_at FROM run_metadata WHERE run_id = ?", [run]).fetchone()[0]
     if not started_at:
@@ -256,16 +286,29 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
         wait_seconds = limiter.wait()
         connection.execute("UPDATE request_jobs SET status = 'running', attempts = ?, updated_at = ? WHERE job_id = ?", [attempt, utc_now(), job_id])
         try:
-            status, headers, payload = _fetch(url, json.loads(params_json), config.request_timeout_seconds)
-            digest, path = _save_response(connection, run, job_id, url, status, headers, payload, roots.enriched / run / "responses")
+            cached = _cache_lookup(cache, job_type, url, params_json, expected_ocid)
+            cache_hit = cached is not None
+            if cache_hit:
+                _, status, content_type, digest, path, observed_ocid, source_run_id = cached
+                headers = {"Content-Type": content_type} if content_type else {}
+                payload = Path(path).read_bytes()
+                connection.execute("INSERT INTO source_responses VALUES (nextval('response_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run, job_id, url, utc_now(), status, content_type, digest, path, len(payload)])
+                connection.execute("UPDATE request_jobs SET cache_hit = TRUE, updated_at = ? WHERE job_id = ?", [utc_now(), job_id])
+            else:
+                status, headers, payload = _fetch(url, json.loads(params_json), config.request_timeout_seconds)
+                digest, path = _save_response(connection, run, job_id, url, status, headers, payload, roots.enriched / run / "responses")
             connection.execute("UPDATE request_jobs SET http_status = ?, response_hash = ?, response_path = ?, updated_at = ? WHERE job_id = ?", [status, digest, path, utc_now(), job_id])
             if status == 200:
+                observed_ocid = None
                 if job_type == "detail":
                     parsed = parse_tender_payload(payload)
+                    observed_ocid = parsed.get("ocid")
                     if parsed.get("ocid") != expected_ocid:
                         raise ValueError("source_record_mismatch")
                 connection.execute("UPDATE request_jobs SET status = 'succeeded', http_status = ?, response_hash = ?, response_path = ?, updated_at = ? WHERE job_id = ?", [status, digest, path, utc_now(), job_id])
-                _record_event(connection, job_id, attempt, "succeeded", wait_seconds, status, False, None, None, digest)
+                if not cache_hit:
+                    _cache_store(cache, job_type, url, params_json, expected_ocid, status, headers.get("Content-Type"), digest, path, observed_ocid, run)
+                _record_event(connection, job_id, attempt, "cache_hit" if cache_hit else "succeeded", wait_seconds, status, False, None, None, digest)
                 if job_type == "list":
                     detail_limit = connection.execute("SELECT detail_limit FROM run_metadata WHERE run_id = ?", [run]).fetchone()[0]
                     _list_success(connection, run, job, payload, digest, config, detail_limit)
@@ -311,10 +354,12 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
             field_coverage[column] = connection.execute(f"SELECT count(*) FILTER (WHERE {column} IS NOT NULL AND trim(cast({column} AS VARCHAR)) <> '') FROM read_parquet(?)", [str(parquet)]).fetchone()[0]
     elapsed_seconds = max(0.0, (datetime.fromisoformat(finished_at) - datetime.fromisoformat(started_at)).total_seconds())
     response_count = connection.execute("SELECT count(*) FROM source_responses WHERE run_id = ?", [run]).fetchone()[0]
-    report = {"run_id": run, "country": country, "source_snapshot_sha256": source_sha, "source": config.source, "source_version": config.source_version, "api_version": config.api_version, "rate_policy": {"concurrency": config.concurrency, "refill_rate_per_second": config.refill_rate_per_second, "jitter_seconds": config.jitter_seconds}, "job_counts": {key: counts.get(key, 0) for key in ("succeeded", "pending", "retryable_failed", "permanent_failed")}, "mapping_counts": mapping_counts, "mapping_total": sum(mapping_counts.values()), "detail_jobs": detail_total, "detail_match_rate": materialized["rows"] / detail_total if detail_total else 0, "field_coverage": field_coverage, "http_status_counts": status_counts, "accepted_detail_rows": materialized["rows"], "response_count": response_count, "duplicate_mapping_rows": connection.execute("SELECT count(*) - count(DISTINCT ocid || '|' || external_id) FROM source_mappings WHERE run_id = ?", [run]).fetchone()[0], "average_wait_seconds": wait_stats[0], "p95_wait_seconds": wait_stats[1], "effective_request_rate_per_second": response_count / elapsed_seconds if elapsed_seconds else 0, "rate_limit_events": wait_stats[2], "elapsed_seconds": elapsed_seconds, "output_root": str(output_root), "ledger": str(ledger_path), "status": "pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn"}
+    cache_hits = connection.execute("SELECT count(*) FROM request_jobs WHERE run_id = ? AND cache_hit = TRUE", [run]).fetchone()[0]
+    report = {"run_id": run, "country": country, "source_snapshot_sha256": source_sha, "source": config.source, "source_version": config.source_version, "api_version": config.api_version, "rate_policy": {"concurrency": config.concurrency, "refill_rate_per_second": config.refill_rate_per_second, "jitter_seconds": config.jitter_seconds}, "job_counts": {key: counts.get(key, 0) for key in ("succeeded", "pending", "retryable_failed", "permanent_failed")}, "mapping_counts": mapping_counts, "mapping_total": sum(mapping_counts.values()), "detail_jobs": detail_total, "detail_match_rate": materialized["rows"] / detail_total if detail_total else 0, "field_coverage": field_coverage, "http_status_counts": status_counts, "accepted_detail_rows": materialized["rows"], "response_count": response_count, "network_requests": response_count - cache_hits, "cache_hits": cache_hits, "cache_path": str(_cache_path(roots)), "duplicate_mapping_rows": connection.execute("SELECT count(*) - count(DISTINCT ocid || '|' || external_id) FROM source_mappings WHERE run_id = ?", [run]).fetchone()[0], "average_wait_seconds": wait_stats[0], "p95_wait_seconds": wait_stats[1], "effective_request_rate_per_second": response_count / elapsed_seconds if elapsed_seconds else 0, "rate_limit_events": wait_stats[2], "elapsed_seconds": elapsed_seconds, "output_root": str(output_root), "ledger": str(ledger_path), "status": "pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn"}
     write_run_manifest("source-enrich", source_sha, {"country": country, "report": report, "ledger": str(ledger_path), "output_root": str(output_root)}, run=run, working_root=roots.working)
     (output_root / "source_enrichment_execution_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     (output_root / "source_enrichment_execution_report.md").write_text(render_report(report), encoding="utf-8")
+    cache.close()
     connection.close()
     return report
 
@@ -324,7 +369,7 @@ def render_report(report: dict) -> str:
     lines.extend(f"- `{key}`: {value}" for key, value in report["job_counts"].items())
     lines.extend(["", "## Mapping", ""])
     lines.extend(f"- `{key}`: {value}" for key, value in report["mapping_counts"].items())
-    lines.extend(["", f"Accepted detail rows: {report['accepted_detail_rows']}", f"Stored responses: {report['response_count']}", f"Detail match rate: {report['detail_match_rate']:.3f}", f"Average wait: {report['average_wait_seconds']:.3f}s", f"P95 wait: {report['p95_wait_seconds']:.3f}s", f"Rate-limit events: {report['rate_limit_events']}", ""])
+    lines.extend(["", f"Accepted detail rows: {report['accepted_detail_rows']}", f"Stored responses: {report['response_count']}", f"Network requests: {report['network_requests']}", f"Cache hits: {report['cache_hits']}", f"Detail match rate: {report['detail_match_rate']:.3f}", f"Average wait: {report['average_wait_seconds']:.3f}s", f"P95 wait: {report['p95_wait_seconds']:.3f}s", f"Rate-limit events: {report['rate_limit_events']}", ""])
     lines.extend(["## Field coverage", ""])
     lines.extend(f"- `{key}`: {value}" for key, value in report["field_coverage"].items())
     return "\n".join(lines)
