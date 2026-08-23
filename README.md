@@ -32,6 +32,8 @@ The raw artifact is kept under `data/raw/` with a SHA-256 manifest. Each normali
 
 Cross-session operating rules live in [`AGENTS.md`](AGENTS.md). The machine-readable pipeline contract is [`config/pipeline-contract.json`](config/pipeline-contract.json); tests enforce its required layers, operations, determinism, and boundaries.
 
+Project phase status and next decisions are tracked in [`docs/roadmap/phase-tracker.md`](docs/roadmap/phase-tracker.md).
+
 ## Current scope
 
 This repository currently establishes the procurement domain map, source ingestion, canonical lifecycle tables, deterministic identity auditing, descriptive marts, and explainable ICT retrieval. It does not implement fuzzy entity resolution, document downloading, semantic embeddings, lead scoring, a hosted database, or a product UI.

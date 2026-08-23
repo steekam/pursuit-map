@@ -18,6 +18,7 @@ Read this file before changing the repository. Keep changes within the current p
 - Compatibility files may point to the latest run; they must not be the only copy.
 - Do not commit raw or generated data. Record hashes and row counts in manifests.
 - Before changing a schema, update `config/pipeline-contract.json`, canonical schema documentation, and tests together.
+- When a phase or milestone changes, update `docs/roadmap/phase-tracker.md` and add a build-log entry with measurements.
 
 ## Development loop
 
