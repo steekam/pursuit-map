@@ -19,6 +19,8 @@ from .durable_source_enrichment import plan as source_enrich_plan
 from .durable_source_enrichment import report as source_enrich_report
 from .durable_source_enrichment import resume as source_enrich_resume
 from .verification import verify_outputs
+from .document_download import plan as document_plan
+from .document_download import run as document_run
 
 
 def main() -> None:
@@ -84,6 +86,17 @@ def main() -> None:
     verify_parser = commands.add_parser("verify")
     verify_parser.add_argument("country", choices=["za", "ke"])
 
+    documents_parser = commands.add_parser("documents")
+    documents_subparsers = documents_parser.add_subparsers(dest="documents_action", required=True)
+    documents_plan = documents_subparsers.add_parser("plan")
+    documents_plan.add_argument("--input-parquet", type=Path, required=True)
+    documents_plan.add_argument("--output-root", type=Path, required=True)
+    documents_plan.add_argument("--source-run-id", required=True)
+    documents_plan.add_argument("--source-snapshot-sha256", required=True)
+    documents_run = documents_subparsers.add_parser("run")
+    documents_run.add_argument("--run-root", type=Path, required=True)
+    documents_run.add_argument("--timeout", type=int, default=60)
+
     args = parser.parse_args()
     if args.command == "ingest":
         result = ingest(args.url or None, country=args.country, force=args.force, local_path=args.local_path)
@@ -110,6 +123,11 @@ def main() -> None:
         result = evaluate_baselines(args.verticals)
     elif args.command == "verify":
         result = verify_outputs(args.country)
+    elif args.command == "documents":
+        if args.documents_action == "plan":
+            result = document_plan(args.input_parquet, args.output_root, source_run_id=args.source_run_id, source_snapshot_sha256=args.source_snapshot_sha256)
+        else:
+            result = document_run(args.run_root, timeout=args.timeout)
     else:
         result = search(args.query, vertical=args.vertical, limit=args.limit, taxonomy_path=args.taxonomy_path, as_of=args.as_of)
     print(json.dumps(result, indent=2, default=str))

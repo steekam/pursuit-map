@@ -23,6 +23,13 @@ The project environment is `.venv/` at the repository root. The project pins UV 
 
 The repository is a monorepo. Python data production lives under `pipeline/`. Shared project assets remain at the root. Future serving and product applications will become separate workspace members when they contain working code.
 
+Document capture uses the durable downloader before Docling extraction:
+
+```text
+uv run pursuitmap documents plan --input-parquet <source-enrichment.parquet> --output-root <document-run> --source-run-id <run-id> --source-snapshot-sha256 <hash>
+uv run pursuitmap documents run --run-root <document-run>
+```
+
 ```text
 pipeline/       Python ingestion, normalization, verification, and materialization
 analytics/      SQL and exploratory analysis
