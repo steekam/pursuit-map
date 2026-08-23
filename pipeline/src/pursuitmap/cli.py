@@ -62,9 +62,11 @@ def main() -> None:
     durable_run = durable_subparsers.add_parser("run")
     durable_run.add_argument("country", choices=["ke"])
     durable_run.add_argument("--run-id", required=True)
+    durable_run.add_argument("--workers", type=int)
     durable_resume = durable_subparsers.add_parser("resume")
     durable_resume.add_argument("country", choices=["ke"])
     durable_resume.add_argument("--run-id", required=True)
+    durable_resume.add_argument("--workers", type=int)
     durable_report = durable_subparsers.add_parser("report")
     durable_report.add_argument("country", choices=["ke"])
     durable_report.add_argument("--run-id", required=True)
@@ -125,9 +127,9 @@ def main() -> None:
         if args.source_enrich_action == "plan":
             result = source_enrich_plan(args.country, limit=args.limit)
         elif args.source_enrich_action == "run":
-            result = source_enrich_execute(args.run_id, country=args.country)
+            result = source_enrich_execute(args.run_id, country=args.country, workers=args.workers)
         elif args.source_enrich_action == "resume":
-            result = source_enrich_resume(args.run_id, country=args.country)
+            result = source_enrich_resume(args.run_id, country=args.country, workers=args.workers)
         elif args.source_enrich_action == "benchmark":
             if len(args.rates) != len(args.workers):
                 parser.error("--rates and --workers must have the same length")

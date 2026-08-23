@@ -3,12 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
@@ -86,13 +88,21 @@ class RateLimiter:
         self.sleeper = sleeper
         self.randomizer = randomizer
         self.next_at = 0.0
+        self._lock = threading.Lock()
+
+    def reserve(self) -> float:
+        with self._lock:
+            now = self.clock()
+            start = max(self.next_at, now)
+            scheduled = start + self.randomizer() * self.jitter
+            self.next_at = start + self.interval
+            return scheduled
 
     def wait(self) -> float:
-        now = self.clock()
-        delay = max(0.0, self.next_at - now) + self.randomizer() * self.jitter
+        scheduled = self.reserve()
+        delay = max(0.0, scheduled - self.clock())
         if delay:
             self.sleeper(delay)
-        self.next_at = max(self.next_at, self.clock()) + self.interval
         return delay
 
     def slow_down(self, factor: float = 2.0) -> None:
@@ -171,6 +181,83 @@ def _save_response(connection, run: str, job_id: str, url: str, status: int, hea
 
 def _record_event(connection, job_id: str, attempt: int, state: str, wait_seconds: float, status: int | None, retryable: bool, error_class: str | None, error_message: str | None, response_hash: str | None) -> None:
     connection.execute("INSERT INTO request_events VALUES (nextval('event_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [job_id, attempt, state, wait_seconds, status, retryable, error_class, error_message, response_hash, utc_now()])
+
+
+def _scheduled_fetch(job: tuple, scheduled_at: float, timeout: int) -> tuple[tuple, int | None, dict, bytes, Exception | None, float]:
+    started = time.monotonic()
+    delay = max(0.0, scheduled_at - started)
+    if delay:
+        time.sleep(delay)
+    try:
+        status, headers, payload = _fetch(job[4], json.loads(job[5]), timeout)
+        return job, status, headers, payload, None, time.monotonic() - started
+    except Exception as error:
+        return job, None, {}, b"", error, time.monotonic() - started
+
+
+def _process_detail_batch(connection, cache, jobs: list[tuple], run: str, config: EngineConfig, limiter: RateLimiter, response_root: Path, randomizer: Callable[[], float], sleeper: Callable[[float], None], workers: int) -> None:
+    cached_results = []
+    network_jobs = []
+    for job in jobs:
+        params_json = job[5]
+        cached = _cache_lookup(cache, "detail", job[4], params_json, job[6])
+        if cached:
+            _, status, content_type, digest, path, observed_ocid, source_run_id = cached
+            cached_results.append((job, status, {"Content-Type": content_type} if content_type else {}, Path(path).read_bytes(), None, 0.0, True, digest, path, observed_ocid))
+        else:
+            network_jobs.append(job)
+    futures = {}
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for job in network_jobs:
+            futures[executor.submit(_scheduled_fetch, job, limiter.reserve(), config.request_timeout_seconds)] = job
+        results = cached_results + [(*future.result(), False, None, None, None) for future in as_completed(futures)]
+    consecutive_429 = 0
+    for job, status, headers, payload, error, elapsed, cache_hit, digest, path, observed_ocid in results:
+        job_id, _, _, _, url, params_json, expected_ocid, external_id, _, attempts, *_ = job
+        attempt = attempts + 1
+        if cache_hit:
+            connection.execute("INSERT INTO source_responses VALUES (nextval('response_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run, job_id, url, utc_now(), status, headers.get("Content-Type"), digest, path, len(payload)])
+            connection.execute("UPDATE request_jobs SET cache_hit = TRUE, updated_at = ? WHERE job_id = ?", [utc_now(), job_id])
+        else:
+            if error:
+                retryable, error_class = classify_status(None, error, config.retry_statuses)
+                state = "retryable_failed" if retryable and attempt < config.max_attempts else "permanent_failed"
+                connection.execute("UPDATE request_jobs SET status = ?, attempts = ?, error_class = ?, error_message = ?, next_attempt_at = ?, updated_at = ? WHERE job_id = ?", [state, attempt, error_class, str(error), time.monotonic() + min(config.max_backoff_seconds, 2 ** attempt), utc_now(), job_id])
+                _record_event(connection, job_id, attempt, state, elapsed, None, state == "retryable_failed", error_class, str(error), None)
+                continue
+            digest, path = _save_response(connection, run, job_id, url, status, headers, payload, response_root)
+        connection.execute("UPDATE request_jobs SET status = 'running', attempts = ?, http_status = ?, response_hash = ?, response_path = ?, updated_at = ? WHERE job_id = ?", [attempt, status, digest, path, utc_now(), job_id])
+        if status == 200:
+            try:
+                parsed = parse_tender_payload(payload)
+                observed_ocid = parsed.get("ocid")
+                if observed_ocid != expected_ocid:
+                    raise ValueError("source_record_mismatch")
+            except ValueError as error_value:
+                connection.execute("UPDATE request_jobs SET status = 'permanent_failed', error_class = 'validation', error_message = ?, updated_at = ? WHERE job_id = ?", [str(error_value), utc_now(), job_id])
+                _record_event(connection, job_id, attempt, "permanent_failed", elapsed, status, False, "validation", str(error_value), digest)
+                continue
+            connection.execute("UPDATE request_jobs SET status = 'succeeded', observed_ocid = ?, updated_at = ? WHERE job_id = ?", [observed_ocid, utc_now(), job_id])
+            if not cache_hit:
+                _cache_store(cache, "detail", url, params_json, expected_ocid, status, headers.get("Content-Type"), digest, path, observed_ocid, run)
+            _record_event(connection, job_id, attempt, "cache_hit" if cache_hit else "succeeded", elapsed, status, False, None, None, digest)
+            continue
+        retryable, error_class = classify_status(status, None, config.retry_statuses)
+        if retryable and attempt < config.max_attempts:
+            if status == 429:
+                consecutive_429 += 1
+                limiter.slow_down()
+                if consecutive_429 >= config.circuit_breaker_429_count:
+                    sleeper(config.circuit_breaker_pause_seconds)
+                    consecutive_429 = 0
+            retry_after = headers.get("Retry-After")
+            delay = min(config.max_backoff_seconds, float(retry_after) if retry_after and retry_after.isdigit() else 2 ** attempt) + randomizer() * config.jitter_seconds
+            state = "retryable_failed"
+            connection.execute("UPDATE request_jobs SET status = ?, next_attempt_at = ?, error_class = ?, error_message = ?, updated_at = ? WHERE job_id = ?", [state, time.monotonic() + delay, error_class, "retryable HTTP response", utc_now(), job_id])
+            _record_event(connection, job_id, attempt, state, elapsed, status, True, error_class, "retryable HTTP response", digest)
+        else:
+            connection.execute("UPDATE request_jobs SET status = 'permanent_failed', error_class = ?, error_message = ?, updated_at = ? WHERE job_id = ?", [error_class, "permanent HTTP response", utc_now(), job_id])
+            _record_event(connection, job_id, attempt, "permanent_failed", elapsed, status, False, error_class, "permanent HTTP response", digest)
 
 
 def _create_sequences(connection) -> None:
@@ -342,7 +429,7 @@ def _materialize_eligibility(connection, run: str, config: EngineConfig) -> dict
     return {"output": str(output), "counts": {str(row[0]): row[1] for row in connection.execute("SELECT state, count(*) FROM enrichment_eligibility GROUP BY 1 ORDER BY 1").fetchall()}, "rows": len(rows)}
 
 
-def execute(run: str, *, country: str = "ke", config_path: Path | None = None, sleep: Callable[[float], None] = time.sleep, randomizer: Callable[[], float] = random.random) -> dict:
+def execute(run: str, *, country: str = "ke", config_path: Path | None = None, sleep: Callable[[float], None] = time.sleep, randomizer: Callable[[], float] = random.random, workers: int | None = None) -> dict:
     roots = country_paths(country)
     config = load_config(config_path)
     ledger_path = roots.enriched / run / "ledger.duckdb"
@@ -353,6 +440,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     _create_sequences(connection)
     cache = _cache_connection(roots)
     _backfill_cache_from_run(connection, cache, run)
+    worker_count = workers or config.concurrency
     connection.execute("UPDATE run_metadata SET status = 'running', resume_count = resume_count + 1 WHERE run_id = ?", [run])
     started_at = connection.execute("SELECT started_at FROM run_metadata WHERE run_id = ?", [run]).fetchone()[0]
     if not started_at:
@@ -367,6 +455,10 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
             if next_ready is None:
                 break
             sleep(max(0.0, next_ready - _now()))
+            continue
+        if worker_count > 1 and job[2] == "detail":
+            batch = connection.execute("SELECT * FROM request_jobs WHERE run_id = ? AND job_type = 'detail' AND status IN ('pending','retryable_failed') AND next_attempt_at <= ? ORDER BY created_at, job_id LIMIT ?", [run, _now(), worker_count]).fetchall()
+            _process_detail_batch(connection, cache, batch, run, config, limiter, roots.enriched / run / "responses", randomizer, sleep, worker_count)
             continue
         job_id, _, job_type, endpoint, url, params_json, expected_ocid, external_id, _, attempts, *_ = job
         attempt = attempts + 1

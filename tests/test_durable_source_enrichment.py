@@ -46,7 +46,7 @@ def test_plan_run_materialize_with_fake_ppip(monkeypatch, tmp_path):
         return (200, {"Content-Type": "application/json"}, list_payload if "/api/active-tenders" in url or "/api/closed-tenders" in url else detail_payload)
 
     monkeypatch.setattr(engine, "_fetch", fake_fetch)
-    result = engine.execute(planned["run_id"], country="ke", sleep=lambda _: None, randomizer=lambda: 0.0)
+    result = engine.execute(planned["run_id"], country="ke", sleep=lambda _: None, randomizer=lambda: 0.0, workers=2)
     assert result["accepted_detail_rows"] == 1
     assert result["mapping_counts"] == {"true": 1, "false": 1}
     assert result["detail_match_rate"] == 1.0
