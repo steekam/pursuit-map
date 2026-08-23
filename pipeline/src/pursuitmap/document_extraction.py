@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from importlib.metadata import PackageNotFoundError, version
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -8,7 +9,10 @@ from .provenance import sha256_file, utc_now
 
 
 PARSER_NAME = "docling"
-PARSER_VERSION = "2.x"
+try:
+    PARSER_VERSION = version("docling")
+except PackageNotFoundError:
+    PARSER_VERSION = "unknown"
 
 
 @dataclass(frozen=True)
@@ -29,8 +33,8 @@ def _require_docling():
     return DocumentConverter
 
 
-def extract_document(document: DocumentInput, output_dir: Path) -> dict:
-    """Convert one captured document and write content-addressed outputs."""
+def _write_extraction(document: DocumentInput, output_dir: Path, converter: object) -> dict:
+    """Convert one captured document with a supplied converter."""
     if not document.path.is_file():
         raise FileNotFoundError(document.path)
     input_sha256 = sha256_file(document.path)
@@ -39,10 +43,10 @@ def extract_document(document: DocumentInput, output_dir: Path) -> dict:
     json_path = artifact_dir / "docling.json"
     markdown_path = artifact_dir / "document.md"
     manifest_path = artifact_dir / "extraction_manifest.json"
-    converter = _require_docling()()
     result = converter.convert(str(document.path))
     result.document.save_as_json(str(json_path))
     markdown_path.write_text(result.document.export_to_markdown(), encoding="utf-8")
+    document_dump = result.document.model_dump() if hasattr(result.document, "model_dump") else {}
     manifest = {
         "source_snapshot_sha256": document.source_snapshot_sha256,
         "source_url": document.source_url,
@@ -53,6 +57,7 @@ def extract_document(document: DocumentInput, output_dir: Path) -> dict:
         "input_sha256": input_sha256,
         "parser": PARSER_NAME,
         "parser_version": PARSER_VERSION,
+        "docling_json_schema_version": document_dump.get("version"),
         "conversion_options": {"ocr": "docling-default", "tables": "docling-default"},
         "outputs": {
             "json": {"path": str(json_path), "sha256": sha256_file(json_path)},
@@ -63,6 +68,17 @@ def extract_document(document: DocumentInput, output_dir: Path) -> dict:
     }
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest
+
+
+def extract_document(document: DocumentInput, output_dir: Path) -> dict:
+    """Convert one captured document and write content-addressed outputs."""
+    return _write_extraction(document, output_dir, _require_docling()())
+
+
+def extract_documents(documents: list[DocumentInput], output_dir: Path) -> list[dict]:
+    """Convert a batch with one converter instance and content-addressed outputs."""
+    converter = _require_docling()()
+    return [_write_extraction(document, output_dir, converter) for document in documents]
 
 
 def write_input_manifest(document: DocumentInput, output_path: Path) -> Path:

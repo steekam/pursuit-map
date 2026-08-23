@@ -1,5 +1,5 @@
 {
-  "contract_version": "phase1.5.1",
+  "contract_version": "phase1.6.0",
   "source": {
     "baseline": "OCP South Africa full JSONL snapshot",
     "raw_artifact_immutable": true,
@@ -60,6 +60,22 @@
       "deterministic_from_captured_responses": true,
       "durable_ledger": "duckdb"
     },
+    "documents-extract": {
+      "input": "raw_source_truth",
+      "outputs": ["derived_observations"],
+      "versioned_output": true,
+      "manifest": true,
+      "deterministic": true,
+      "evidence_required": true,
+      "content_hash_deduplicated": true
+    },
+    "documents-report": {
+      "input": "derived_observations",
+      "outputs": ["quality_report"],
+      "versioned_output": true,
+      "manifest": false,
+      "deterministic": true
+    },
     "materialize": {
       "input": "canonical_facts",
       "outputs": ["derived_observations", "intelligence_outputs"],
@@ -78,7 +94,7 @@
   },
   "boundaries": {
     "entity_resolution": "deterministic_audit_only",
-    "documents": "metadata_and_urls_only",
+    "documents": "captured_binaries_and_deterministic_extraction",
     "opaque_models": false,
     "currency_conversion": false,
     "prediction_claims": false

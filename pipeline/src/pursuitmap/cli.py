@@ -21,6 +21,7 @@ from .durable_source_enrichment import resume as source_enrich_resume
 from .verification import verify_outputs
 from .document_download import plan as document_plan
 from .document_download import run as document_run
+from .document_features import extract_features, report as document_feature_report
 
 
 def main() -> None:
@@ -98,6 +99,11 @@ def main() -> None:
     documents_run.add_argument("--run-root", type=Path, required=True)
     documents_run.add_argument("--timeout", type=int, default=60)
     documents_run.add_argument("--rate", type=float, default=1.0)
+    documents_extract = documents_subparsers.add_parser("extract")
+    documents_extract.add_argument("--run-root", type=Path, required=True)
+    documents_extract.add_argument("--rules-path", type=Path, required=True)
+    documents_report = documents_subparsers.add_parser("report")
+    documents_report.add_argument("--run-root", type=Path, required=True)
 
     args = parser.parse_args()
     if args.command == "ingest":
@@ -128,8 +134,12 @@ def main() -> None:
     elif args.command == "documents":
         if args.documents_action == "plan":
             result = document_plan(args.input_parquet, args.output_root, source_run_id=args.source_run_id, source_snapshot_sha256=args.source_snapshot_sha256, base_url=args.base_url)
-        else:
+        elif args.documents_action == "run":
             result = document_run(args.run_root, timeout=args.timeout, rate_per_second=args.rate)
+        elif args.documents_action == "extract":
+            result = extract_features(args.run_root, args.rules_path)
+        else:
+            result = document_feature_report(args.run_root)
     else:
         result = search(args.query, vertical=args.vertical, limit=args.limit, taxonomy_path=args.taxonomy_path, as_of=args.as_of)
     print(json.dumps(result, indent=2, default=str))

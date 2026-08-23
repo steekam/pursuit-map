@@ -20,6 +20,7 @@ from .provenance import run_id, utc_now
 RETRY_STATUSES = (408, 425, 429, 500, 502, 503, 504)
 LEDGER_SCHEMA = {
     "download_jobs": "job_id VARCHAR PRIMARY KEY, source_run_id VARCHAR, ocid VARCHAR, release_id VARCHAR, document_id VARCHAR, source_url VARCHAR, normalized_url VARCHAR, status VARCHAR, attempts INTEGER, http_status INTEGER, content_type VARCHAR, response_hash VARCHAR, response_path VARCHAR, validation_status VARCHAR, error_class VARCHAR, error_message VARCHAR, created_at VARCHAR, updated_at VARCHAR",
+    "download_job_refs": "reference_id BIGINT, job_id VARCHAR, ocid VARCHAR, release_id VARCHAR, document_id VARCHAR, source_url VARCHAR, created_at VARCHAR",
     "download_events": "event_id BIGINT, job_id VARCHAR, attempt INTEGER, state VARCHAR, http_status INTEGER, response_hash VARCHAR, error_class VARCHAR, error_message VARCHAR, created_at VARCHAR",
 }
 
@@ -41,6 +42,7 @@ def normalize_url(value: str, base_url: str = "https://tenders.go.ke") -> str:
 
 def _create_ledger(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute("CREATE SEQUENCE IF NOT EXISTS download_event_seq START 1")
+    connection.execute("CREATE SEQUENCE IF NOT EXISTS download_reference_seq START 1")
     for table, definition in LEDGER_SCHEMA.items():
         connection.execute(f'CREATE TABLE IF NOT EXISTS "{table}" ({definition})')
 
@@ -71,15 +73,20 @@ def plan(input_parquet: Path, output_root: Path, *, source_run_id: str, source_s
                 url = normalize_url(raw_url, base_url)
             except ValueError:
                 continue
-            item = rows.setdefault(url, {"ocids": [], "release_ids": [], "document_ids": []})
+            item = rows.setdefault(url, {"ocids": [], "release_ids": [], "document_ids": [], "references": []})
             item["ocids"].append(ocid)
             item["release_ids"].append(release_id)
+            item["references"].append({"ocid": ocid, "release_id": release_id, "document_id": str(document.get("id")) if document.get("id") is not None else None, "source_url": url})
             if document.get("id") is not None:
                 item["document_ids"].append(str(document["id"]))
     now = utc_now()
     for url, refs in rows.items():
         job_id = _job_id(url)
         connection.execute("""INSERT INTO download_jobs (job_id, source_run_id, ocid, release_id, document_id, source_url, normalized_url, status, attempts, http_status, content_type, response_hash, response_path, validation_status, error_class, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?) ON CONFLICT (job_id) DO NOTHING""", [job_id, source_run_id, json.dumps(sorted(set(refs["ocids"]))), json.dumps(sorted(set(refs["release_ids"]))), json.dumps(sorted(set(refs["document_ids"]))), url, url, now, now])
+        connection.execute("DELETE FROM download_job_refs WHERE job_id = ?", [job_id])
+        for reference in {json.dumps(value, sort_keys=True) for value in refs["references"]}:
+            value = json.loads(reference)
+            connection.execute("INSERT INTO download_job_refs VALUES (nextval('download_reference_seq'), ?, ?, ?, ?, ?, ?)", [job_id, value["ocid"], value["release_id"], value["document_id"], value["source_url"], now])
     connection.close()
     return {"run_id": output_root.name, "source_run_id": source_run_id, "source_snapshot_sha256": source_snapshot_sha256, "jobs": len(rows), "ledger": str(ledger_path), "output_root": str(output_root)}
 

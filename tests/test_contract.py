@@ -13,7 +13,7 @@ def test_pipeline_contract_declares_required_operations_and_boundaries():
         "derived_observations",
         "intelligence_outputs",
     }
-    assert set(contract["operations"]) == {"normalize", "verify", "profile", "enrich", "source-enrich", "materialize", "search"}
+    assert set(contract["operations"]) == {"normalize", "verify", "profile", "enrich", "source-enrich", "documents-extract", "documents-report", "materialize", "search"}
     assert all(operation["deterministic"] for operation in contract["operations"].values())
     assert contract["operations"]["search"]["evidence_required"] is True
     assert contract["boundaries"]["opaque_models"] is False

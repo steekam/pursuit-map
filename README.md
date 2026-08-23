@@ -28,6 +28,8 @@ Document capture uses the durable downloader before Docling extraction:
 ```text
 uv run pursuitmap documents plan --input-parquet <source-enrichment.parquet> --output-root <document-run> --source-run-id <run-id> --source-snapshot-sha256 <hash>
 uv run pursuitmap documents run --run-root <document-run>
+uv run pursuitmap documents extract --run-root <document-run> --rules-path config/document-extraction/rules.json
+uv run pursuitmap documents report --run-root <document-run>
 ```
 
 ```text
@@ -49,4 +51,4 @@ Project phase status and next decisions are tracked in [`docs/roadmap/phase-trac
 
 ## Current scope
 
-The repository currently provides the procurement domain map, source ingestion, canonical lifecycle tables, deterministic identity audits, descriptive marts, and explainable retrieval for ICT. It has no fuzzy entity resolution, document download, semantic embedding, lead scoring, hosted database, or product UI.
+The repository currently provides the procurement domain map, source ingestion, canonical lifecycle tables, deterministic identity audits, descriptive marts, explainable retrieval for ICT, durable document capture, and rule-based document feature extraction. It has no fuzzy entity resolution, semantic embedding, lead scoring, hosted database, or product UI.
