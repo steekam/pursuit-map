@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .evaluation import evaluate_baselines
+from .enrichment import enrich
 from .materialize import materialize
 from .normalize import normalize
 from .report import create_report
@@ -34,6 +35,9 @@ def main() -> None:
     profile_parser = commands.add_parser("profile")
     profile_parser.add_argument("country", choices=["za", "ke"])
 
+    enrich_parser = commands.add_parser("enrich")
+    enrich_parser.add_argument("country", choices=["za", "ke"])
+
     materialize_parser = commands.add_parser("materialize")
     materialize_parser.add_argument("country", choices=["za"])
 
@@ -58,6 +62,8 @@ def main() -> None:
         result = ingest(args.url or None, country=args.country, force=args.force, local_path=args.local_path)
     elif args.command == "normalize":
         result = normalize(args.source_path, country=args.country)
+    elif args.command == "enrich":
+        result = enrich(args.country)
     elif args.command in {"report", "profile"}:
         result = create_report(args.country)
     elif args.command == "materialize":

@@ -51,6 +51,7 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 - Contract timing has 171 missing period starts and 173 sentinel or missing period fields.
 - Documents contain metadata and URLs. Binary acquisition and extraction are deferred.
 - Kenya has 0 documents, 0 planning objects, 0 plan items, and 0 tender amounts in the canonical snapshot.
+- Kenya quality flags are materialized in a source-preserving enrichment table with rule version `kenya-quality-1`.
 - Entity merging, prediction, lead scoring, API, and browser UI are not implemented.
 
 ## Immediate next work

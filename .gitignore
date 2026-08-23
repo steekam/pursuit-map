@@ -9,6 +9,7 @@ data/raw/*
 data/working/*
 data/parquet/*
 data/materialized/*
+data/enriched/*
 !data/raw/.gitkeep
 !data/working/.gitkeep
 !data/parquet/.gitkeep

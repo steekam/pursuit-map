@@ -13,6 +13,7 @@ class CountryPaths:
     working: Path
     parquet: Path
     materialized: Path
+    enriched: Path
 
 
 COUNTRY_SLUGS = {"za": "south_africa", "ke": "kenya"}
@@ -28,6 +29,7 @@ def country_paths(country: str = "za") -> CountryPaths:
         working=DATA_ROOT / "working" / slug,
         parquet=DATA_ROOT / "parquet" / slug,
         materialized=DATA_ROOT / "materialized" / slug,
+        enriched=DATA_ROOT / "enriched" / slug,
     )
 
 
@@ -40,7 +42,7 @@ MATERIALIZED_ROOT = _ZA_PATHS.materialized
 
 def ensure_data_dirs(country: str = "za") -> None:
     roots = country_paths(country)
-    for path in (roots.raw, roots.working, roots.parquet, roots.materialized):
+    for path in (roots.raw, roots.working, roots.parquet, roots.materialized, roots.enriched):
         path.mkdir(parents=True, exist_ok=True)
 
 

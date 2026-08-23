@@ -10,6 +10,7 @@ from .paths import canonical_root, country_paths, ensure_data_dirs
 from .provenance import source_hash, utc_now, write_run_manifest
 from .raw_profile import profile_raw
 from .verification import verify_outputs
+from .enrichment import enrich
 
 
 def _scalar(connection: duckdb.DuckDBPyConnection, query: str):
@@ -135,6 +136,7 @@ def create_report(country: str = "za") -> dict:
         """).fetchall()
     ]
     source_sha = source_hash(roots.raw / "ocds_full.jsonl.gz", roots.raw / "manifest.json")
+    enrichment = enrich(country)
     report = {
         "country": country,
         "profile_mode": "canonical_parquet",
@@ -149,6 +151,13 @@ def create_report(country: str = "za") -> dict:
         "top_buyers_by_tender_count": top_buyers,
         "top_suppliers_by_award_count": top_suppliers,
         "anomalies": anomalies,
+        "enrichment": {
+            "rule_version": enrichment["rule_version"],
+            "run_id": enrichment["enrichment_run_id"],
+            "row_count": enrichment["row_count"],
+            "flag_counts": enrichment["flag_counts"],
+            "output_root": enrichment["output_root"],
+        },
         "verification": verify_outputs(country, parquet_root),
         "measured_from": "normalized Parquet tables",
         "assumptions": [
@@ -213,7 +222,7 @@ def render_markdown(report: dict) -> str:
         return str(value)
 
     lines = [
-        "# South Africa OCDS — initial data-quality report",
+        f"# {report.get('country', '').upper()} OCDS — data-quality report",
         "",
         f"Generated: `{report['generated_at']}`",
         "",
@@ -238,6 +247,9 @@ def render_markdown(report: dict) -> str:
         lines.append(f"- `{table}`: " + ", ".join(f"{column}={count:,}" for column, count in values.items()))
     lines.extend(["", "## Anomalies", ""])
     lines.extend(f"- `{name}`: {display(value)}" for name, value in report["anomalies"].items())
+    if "enrichment" in report:
+        lines.extend(["", "## Source-preserving quality flags", "", f"Rule version: `{report['enrichment']['rule_version']}`", f"Flag rows: {report['enrichment']['row_count']:,}", ""])
+        lines.extend(f"- `{name}`: {display(value)}" for name, value in report["enrichment"]["flag_counts"].items())
     lines.extend(["", "## Category and document coverage", ""])
     lines.extend(f"- `{name}`: {display(value)}" for name, value in report["category_and_document_coverage"].items())
     lines.extend(["", "## Top source categories", "", "| Category | Tenders |", "| --- | ---: |"])

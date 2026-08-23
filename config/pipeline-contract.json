@@ -43,6 +43,14 @@
       "manifest": true,
       "deterministic": true
     },
+    "enrich": {
+      "input": "canonical_facts",
+      "outputs": ["derived_observations"],
+      "versioned_output": true,
+      "manifest": true,
+      "deterministic": true,
+      "source_preserving": true
+    },
     "materialize": {
       "input": "canonical_facts",
       "outputs": ["derived_observations", "intelligence_outputs"],
