@@ -8,7 +8,7 @@ from typing import Any
 
 import duckdb
 
-from .paths import PARQUET_ROOT, RAW_ROOT, WORKING_ROOT
+from .paths import RAW_ROOT, WORKING_ROOT, canonical_root
 from .provenance import source_hash, write_run_manifest
 from .retrieval import score_record
 
@@ -20,24 +20,25 @@ def _tokens(value: object) -> list[str]:
     return TOKEN_RE.findall(str(value or "").lower())
 
 
-def _records() -> list[dict[str, Any]]:
+def _records(parquet_root: Path | None = None) -> list[dict[str, Any]]:
+    parquet_root = parquet_root or canonical_root()
     connection = duckdb.connect()
     rows = connection.execute(f"""
         SELECT source_snapshot_sha256, ocid, release_id, release_date, buyer_id, buyer_name,
                tender_id, title, description, category, main_procurement_category,
                additional_categories_json, procuring_entity_id, procuring_entity_name,
                procurement_method, procurement_method_details
-        FROM read_parquet('{PARQUET_ROOT / 'tenders'}.parquet')
+        FROM read_parquet('{parquet_root / 'tenders'}.parquet')
     """).fetchall()
     documents = connection.execute(f"""
         SELECT ocid, release_id, document_id, document_type, title, url
-        FROM read_parquet('{PARQUET_ROOT / 'documents'}.parquet')
+        FROM read_parquet('{parquet_root / 'documents'}.parquet')
         WHERE lifecycle_type = 'tender'
     """).fetchall()
     awards = connection.execute(f"""
         SELECT a.ocid, a.release_id, s.supplier_id, s.supplier_name
-        FROM read_parquet('{PARQUET_ROOT / 'awards'}.parquet') a
-        JOIN read_parquet('{PARQUET_ROOT / 'award_suppliers'}.parquet') s
+        FROM read_parquet('{parquet_root / 'awards'}.parquet') a
+        JOIN read_parquet('{parquet_root / 'award_suppliers'}.parquet') s
           USING (ocid, release_id, release_date, award_id)
     """).fetchall()
     connection.close()
@@ -68,6 +69,7 @@ def _records() -> list[dict[str, Any]]:
 
 def search(query: str, *, limit: int = 20, taxonomy_path: str | Path | None = None, as_of: str | None = None) -> dict[str, Any]:
     source_sha = source_hash(RAW_ROOT / "ocds_full.jsonl.gz", RAW_ROOT / "manifest.json")
+    parquet_root = canonical_root()
     if as_of:
         as_of_manifest = WORKING_ROOT / "runs" / as_of / "run_manifest.json"
         if not as_of_manifest.exists():
@@ -75,9 +77,11 @@ def search(query: str, *, limit: int = 20, taxonomy_path: str | Path | None = No
         as_of_payload = json.loads(as_of_manifest.read_text(encoding="utf-8"))
         if as_of_payload.get("source_snapshot_sha256") != source_sha:
             raise ValueError("The requested run uses a different source snapshot than the current canonical tables")
+        if as_of_payload.get("operation") == "normalize":
+            parquet_root = canonical_root(as_of)
     query_tokens = _tokens(query)
     candidates = []
-    for record in _records():
+    for record in _records(parquet_root):
         text_fields = {
             "title": str(record.get("title") or ""),
             "description": str(record.get("description") or ""),

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import duckdb
 
-from .paths import PARQUET_ROOT, RAW_ROOT, WORKING_ROOT, ensure_data_dirs
+from .paths import RAW_ROOT, WORKING_ROOT, canonical_root, ensure_data_dirs
 from .provenance import source_hash, utc_now, write_run_manifest
 from .verification import verify_outputs
 
@@ -17,6 +17,7 @@ def _scalar(connection: duckdb.DuckDBPyConnection, query: str):
 
 def create_report() -> dict:
     ensure_data_dirs()
+    parquet_root = canonical_root()
     connection = duckdb.connect()
     tables = {
         "releases": "releases",
@@ -31,19 +32,19 @@ def create_report() -> dict:
         "identity_audit": "identity_audit",
     }
     counts = {
-        name: _scalar(connection, f"SELECT count(*) FROM read_parquet('{PARQUET_ROOT / name}.parquet')")
+        name: _scalar(connection, f"SELECT count(*) FROM read_parquet('{parquet_root / name}.parquet')")
         for name in tables
     }
     date_ranges = {}
     for table, column in (("tenders", "release_date"), ("awards", "release_date"), ("contracts", "release_date"), ("procurement_plans", "release_date"), ("procurement_plan_items", "release_date")):
-        path = PARQUET_ROOT / f"{table}.parquet"
+        path = parquet_root / f"{table}.parquet"
         date_ranges[table] = {
             "min": _scalar(connection, f"SELECT min(try_cast(\"{column}\" AS TIMESTAMP)) FROM read_parquet('{path}')"),
             "max": _scalar(connection, f"SELECT max(try_cast(\"{column}\" AS TIMESTAMP)) FROM read_parquet('{path}')"),
         }
     stage_dates = {}
     for table, column in (("tenders", "period_start"), ("awards", "date"), ("contracts", "date_signed"), ("procurement_plans", "period_start"), ("procurement_plan_items", "period_start")):
-        path = PARQUET_ROOT / f"{table}.parquet"
+        path = parquet_root / f"{table}.parquet"
         stage_dates[table] = {
             "min": _scalar(connection, f"SELECT min(try_cast(\"{column}\" AS TIMESTAMP)) FROM read_parquet('{path}')"),
             "max": _scalar(connection, f"SELECT max(try_cast(\"{column}\" AS TIMESTAMP)) FROM read_parquet('{path}')"),
@@ -58,7 +59,7 @@ def create_report() -> dict:
         "procurement_plans": ["rationale", "budget_amount", "period_start"],
         "procurement_plan_items": ["description", "classification_id", "period_start", "value_amount"],
     }.items():
-        path = PARQUET_ROOT / f"{table}.parquet"
+        path = parquet_root / f"{table}.parquet"
         missingness[table] = {
             column: _scalar(connection, f"SELECT count(*) FILTER (WHERE \"{column}\" IS NULL OR trim(cast(\"{column}\" AS VARCHAR)) = '') FROM read_parquet('{path}')")
             for column in columns
@@ -66,49 +67,49 @@ def create_report() -> dict:
     anomalies = {
         "negative_value_rows": _scalar(connection, f"""
             SELECT count(*) FROM (
-                SELECT value_amount FROM read_parquet('{PARQUET_ROOT / 'awards'}.parquet')
-                UNION ALL SELECT value_amount FROM read_parquet('{PARQUET_ROOT / 'contracts'}.parquet')
-                UNION ALL SELECT value_amount FROM read_parquet('{PARQUET_ROOT / 'tenders'}.parquet')
+            SELECT value_amount FROM read_parquet('{parquet_root / 'awards'}.parquet')
+            UNION ALL SELECT value_amount FROM read_parquet('{parquet_root / 'contracts'}.parquet')
+            UNION ALL SELECT value_amount FROM read_parquet('{parquet_root / 'tenders'}.parquet')
             ) WHERE value_amount < 0
         """),
         "award_supplier_orphans": _scalar(connection, f"""
-            SELECT count(*) FROM read_parquet('{PARQUET_ROOT / 'award_suppliers'}.parquet') s
-            LEFT JOIN read_parquet('{PARQUET_ROOT / 'awards'}.parquet') a
+            SELECT count(*) FROM read_parquet('{parquet_root / 'award_suppliers'}.parquet') s
+            LEFT JOIN read_parquet('{parquet_root / 'awards'}.parquet') a
               ON s.ocid = a.ocid AND s.release_id = a.release_id AND s.award_id = a.award_id
             WHERE a.award_id IS NULL
         """),
         "duplicate_tender_release_keys": _scalar(connection, f"""
             SELECT count(*) - count(DISTINCT ocid || '|' || release_id)
-            FROM read_parquet('{PARQUET_ROOT / 'tenders'}.parquet')
+            FROM read_parquet('{parquet_root / 'tenders'}.parquet')
         """),
         "supplier_id_zero_rows": _scalar(connection, f"""
             SELECT count(*) FILTER (WHERE supplier_id = '0')
-            FROM read_parquet('{PARQUET_ROOT / 'award_suppliers'}.parquet')
+            FROM read_parquet('{parquet_root / 'award_suppliers'}.parquet')
         """),
     }
     category_coverage = {
         "tender_main_procurement_category_non_null": _scalar(connection, f"""
             SELECT count(*) FILTER (WHERE main_procurement_category IS NOT NULL AND trim(main_procurement_category) <> '')
-            FROM read_parquet('{PARQUET_ROOT / 'tenders'}.parquet')
+            FROM read_parquet('{parquet_root / 'tenders'}.parquet')
         """),
         "tender_main_procurement_category_distinct": _scalar(connection, f"""
             SELECT count(DISTINCT nullif(trim(main_procurement_category), ''))
-            FROM read_parquet('{PARQUET_ROOT / 'tenders'}.parquet')
+            FROM read_parquet('{parquet_root / 'tenders'}.parquet')
         """),
         "plan_item_classification_non_null": _scalar(connection, f"""
             SELECT count(*) FILTER (WHERE classification_id IS NOT NULL AND trim(classification_id) <> '')
-            FROM read_parquet('{PARQUET_ROOT / 'procurement_plan_items'}.parquet')
+            FROM read_parquet('{parquet_root / 'procurement_plan_items'}.parquet')
         """),
         "document_url_non_null": _scalar(connection, f"""
             SELECT count(*) FILTER (WHERE url IS NOT NULL AND trim(url) <> '')
-            FROM read_parquet('{PARQUET_ROOT / 'documents'}.parquet')
+            FROM read_parquet('{parquet_root / 'documents'}.parquet')
         """),
     }
     top_categories = [
         {"category": row[0], "tender_count": row[1]}
         for row in connection.execute(f"""
             SELECT nullif(trim(main_procurement_category), '') AS category, count(*) AS tender_count
-            FROM read_parquet('{PARQUET_ROOT / 'tenders'}.parquet')
+            FROM read_parquet('{parquet_root / 'tenders'}.parquet')
             WHERE nullif(trim(main_procurement_category), '') IS NOT NULL
             GROUP BY 1 ORDER BY tender_count DESC, category LIMIT 10
         """).fetchall()
@@ -117,7 +118,7 @@ def create_report() -> dict:
         {"buyer_id": row[0], "buyer_name": row[1], "tender_count": row[2]}
         for row in connection.execute(f"""
             SELECT buyer_id, buyer_name, count(*) AS tender_count
-            FROM read_parquet('{PARQUET_ROOT / 'tenders'}.parquet')
+            FROM read_parquet('{parquet_root / 'tenders'}.parquet')
             GROUP BY 1, 2 ORDER BY tender_count DESC, buyer_name LIMIT 10
         """).fetchall()
     ]
@@ -125,7 +126,7 @@ def create_report() -> dict:
         {"supplier_id": row[0], "supplier_name": row[1], "award_count": row[2]}
         for row in connection.execute(f"""
             SELECT supplier_id, supplier_name, count(*) AS award_count
-            FROM read_parquet('{PARQUET_ROOT / 'award_suppliers'}.parquet')
+            FROM read_parquet('{parquet_root / 'award_suppliers'}.parquet')
             GROUP BY 1, 2 ORDER BY award_count DESC, supplier_name LIMIT 10
         """).fetchall()
     ]
@@ -155,9 +156,14 @@ def create_report() -> dict:
             "This first report does not infer procurement need, seller fit, or causal relationships.",
         ],
     }
-    run, run_manifest_path = write_run_manifest("profile", source_sha, {"report": report, "parquet_root": str(PARQUET_ROOT)})
+    run, run_manifest_path = write_run_manifest("profile", source_sha, {"report": report, "parquet_root": str(parquet_root)})
     report["run_id"] = run
     report["run_manifest"] = str(run_manifest_path)
+    versioned_json = WORKING_ROOT / "runs" / run / "data_quality_report.json"
+    versioned_markdown = WORKING_ROOT / "runs" / run / "data_quality_report.md"
+    report["outputs"] = {"json": str(versioned_json), "markdown": str(versioned_markdown)}
+    versioned_json.write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
+    versioned_markdown.write_text(render_markdown(report), encoding="utf-8")
     (WORKING_ROOT / "data_quality_report.json").write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
     (WORKING_ROOT / "data_quality_report.md").write_text(render_markdown(report), encoding="utf-8")
     connection.close()

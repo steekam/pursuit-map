@@ -5,7 +5,7 @@ from pathlib import Path
 
 import duckdb
 
-from .paths import MATERIALIZED_ROOT, PARQUET_ROOT, RAW_ROOT, WORKING_ROOT, ensure_data_dirs
+from .paths import MATERIALIZED_ROOT, RAW_ROOT, WORKING_ROOT, canonical_root, ensure_data_dirs
 from .provenance import source_hash, write_run_manifest
 from .retrieval import load_taxonomy, score_record
 from .search import _records
@@ -74,14 +74,15 @@ def materialize() -> dict:
         raise FileNotFoundError("Run `pursuitmap normalize za` before materializing outputs.")
     normalization = json.loads(manifest_path.read_text(encoding="utf-8"))
     source_sha = normalization["source_snapshot_sha256"]
-    run, run_manifest_path = write_run_manifest("materialize", source_sha, {"query_version": "phase1-marts.1", "source_parquet_root": str(PARQUET_ROOT)})
+    parquet_root = canonical_root(normalization["run_id"])
+    run, run_manifest_path = write_run_manifest("materialize", source_sha, {"query_version": "phase1-marts.1", "source_parquet_root": str(parquet_root)})
     output_root = MATERIALIZED_ROOT / run
     output_root.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect()
     row_counts: dict[str, int] = {}
     output_paths: dict[str, str] = {}
     for name, query in QUERIES.items():
-        relation = connection.sql(f"SELECT '{source_sha}' AS source_snapshot_sha256, 'phase1-marts.1' AS query_version, * FROM ({query.format(root=PARQUET_ROOT)}) AS derived")
+        relation = connection.sql(f"SELECT '{source_sha}' AS source_snapshot_sha256, 'phase1-marts.1' AS query_version, * FROM ({query.format(root=parquet_root)}) AS derived")
         output_path = output_root / f"{name}.parquet"
         relation.to_parquet(str(output_path), compression="zstd")
         row_counts[name] = relation.count("*").fetchone()[0]

@@ -1,6 +1,7 @@
 import gzip
 import json
 
+from pursuitmap import paths
 from pursuitmap.normalize import build_rows, iter_releases, normalize_name, number
 
 
@@ -59,3 +60,17 @@ def test_iter_releases_accepts_jsonl_and_release_packages(tmp_path):
         handle.write(json.dumps({"ocid": "one"}) + "\n")
         handle.write(json.dumps({"releases": [{"ocid": "two"}, {"ocid": "three"}]}) + "\n")
     assert [release["ocid"] for release in iter_releases(path)] == ["one", "two", "three"]
+
+
+def test_canonical_root_resolves_latest_run_from_manifest(tmp_path, monkeypatch):
+    parquet_root = tmp_path / "parquet"
+    working_root = tmp_path / "working"
+    run_root = parquet_root / "normalize-test"
+    run_root.mkdir(parents=True)
+    working_root.mkdir()
+    (working_root / "normalization_manifest.json").write_text(json.dumps({"parquet_root": str(run_root)}), encoding="utf-8")
+    monkeypatch.setattr(paths, "PARQUET_ROOT", parquet_root)
+    monkeypatch.setattr(paths, "WORKING_ROOT", working_root)
+
+    assert paths.canonical_root() == run_root
+    assert paths.canonical_root("normalize-test") == run_root

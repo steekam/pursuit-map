@@ -37,7 +37,7 @@ def source_hash(source_path: Path, manifest_path: Path | None = None) -> str:
 
 
 def run_id(source_sha256: str, operation: str) -> str:
-    return f"{operation}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{source_sha256[:12]}"
+    return f"{operation}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}-{source_sha256[:12]}"
 
 
 def environment() -> dict[str, str]:
@@ -57,8 +57,8 @@ def parquet_checksums(parquet_root: Path) -> dict[str, str]:
     }
 
 
-def write_run_manifest(operation: str, source_sha256: str, payload: dict) -> tuple[str, Path]:
-    run = run_id(source_sha256, operation)
+def write_run_manifest(operation: str, source_sha256: str, payload: dict, *, run: str | None = None) -> tuple[str, Path]:
+    run = run or run_id(source_sha256, operation)
     run_dir = WORKING_ROOT / "runs" / run
     run_dir.mkdir(parents=True, exist_ok=True)
     manifest = {

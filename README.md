@@ -16,7 +16,7 @@ pursuitmap materialize za
 pursuitmap search za --query "network modernization" --vertical ict --limit 20 --format json
 ```
 
-The raw artifact is kept under `data/raw/` with a SHA-256 manifest. Normalized DuckDB and Parquet outputs are written under `data/working/` and `data/parquet/`; generated data is gitignored. Run manifests are written under `data/working/south_africa/runs/`.
+The raw artifact is kept under `data/raw/` with a SHA-256 manifest. Each normalization run writes canonical Parquet under `data/parquet/south_africa/<normalize-run-id>/` and DuckDB under its matching run directory. Reports, derived marts, and run manifests are also physically versioned; compatibility files at the data root point to the latest result. Generated data is gitignored. The latest canonical run is selected by `data/working/south_africa/normalization_manifest.json`.
 
 ## Current scope
 

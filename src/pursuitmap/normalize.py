@@ -9,7 +9,7 @@ from pathlib import Path
 import duckdb
 
 from .paths import PARQUET_ROOT, RAW_ROOT, WORKING_ROOT, ensure_data_dirs
-from .provenance import parquet_checksums, source_hash, utc_now, write_run_manifest
+from .provenance import parquet_checksums, run_id, source_hash, utc_now, write_run_manifest
 
 
 TABLE_COLUMNS = {
@@ -206,7 +206,11 @@ def normalize(source_path: Path | None = None) -> dict:
     for table in TABLE_COLUMNS:
         rows[table] = [(source_sha, *row) for row in rows[table]]
 
-    database_path = WORKING_ROOT / "south_africa.duckdb"
+    run = run_id(source_sha, "normalize")
+    parquet_root = PARQUET_ROOT / run
+    parquet_root.mkdir(parents=True, exist_ok=False)
+    database_path = WORKING_ROOT / "runs" / run / "south_africa.duckdb"
+    database_path.parent.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect(str(database_path))
     for table, columns in TABLE_COLUMNS.items():
         connection.execute(f'DROP TABLE IF EXISTS "{table}"')
@@ -215,7 +219,7 @@ def normalize(source_path: Path | None = None) -> dict:
         if rows[table]:
             placeholders = ", ".join("?" for _ in columns)
             connection.executemany(f'INSERT INTO "{table}" VALUES ({placeholders})', rows[table])
-        connection.execute(f'COPY "{table}" TO ? (FORMAT PARQUET, COMPRESSION ZSTD)', [str(PARQUET_ROOT / f"{table}.parquet")])
+        connection.execute(f'COPY "{table}" TO ? (FORMAT PARQUET, COMPRESSION ZSTD)', [str(parquet_root / f"{table}.parquet")])
     connection.close()
 
     manifest = {
@@ -225,10 +229,10 @@ def normalize(source_path: Path | None = None) -> dict:
         "release_count": release_count,
         "row_counts": {table: len(table_rows) for table, table_rows in rows.items()},
         "database": str(database_path),
-        "parquet_root": str(PARQUET_ROOT),
-        "parquet_sha256": parquet_checksums(PARQUET_ROOT),
+        "parquet_root": str(parquet_root),
+        "parquet_sha256": parquet_checksums(parquet_root),
     }
-    run, run_manifest_path = write_run_manifest("normalize", source_sha, manifest)
+    run, run_manifest_path = write_run_manifest("normalize", source_sha, manifest, run=run)
     manifest["run_id"] = run
     manifest["run_manifest"] = str(run_manifest_path)
     (WORKING_ROOT / "normalization_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

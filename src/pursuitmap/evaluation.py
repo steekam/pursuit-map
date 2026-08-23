@@ -44,7 +44,8 @@ def evaluate_baselines() -> dict:
     }
     run, run_manifest_path = write_run_manifest("evaluate", source_sha, {"evaluation_version": "retrieval-baselines.1", "results": results})
     output = {"run_id": run, "run_manifest": str(run_manifest_path), "source_snapshot_sha256": source_sha, "evaluation_version": "retrieval-baselines.1", "results": results}
-    path = WORKING_ROOT / "retrieval_baseline_comparison.json"
+    path = WORKING_ROOT / "runs" / run / "retrieval_baseline_comparison.json"
     path.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
     output["output"] = str(path)
+    (WORKING_ROOT / "retrieval_baseline_comparison.json").write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
     return output
