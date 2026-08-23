@@ -1,0 +1,180 @@
+{
+  "version": "ict/2026-08-23",
+  "field_weights": {
+    "title": 4.0,
+    "description": 2.5,
+    "summary": 2.0,
+    "items": 1.5,
+    "documents": 1.0,
+    "classification": 2.0,
+    "buyer.name": 0.75,
+    "supplier.name": 0.75,
+    "notes": 0.5
+  },
+  "global_exclusions": [
+    "stationery",
+    "furniture",
+    "cleaning",
+    "catering",
+    "fuel",
+    "construction",
+    "transport",
+    "uniforms",
+    "gardening"
+  ],
+  "blocked_categories": [
+    "commodity_hardware"
+  ],
+  "categories": [
+    {
+      "id": "ict",
+      "label": "ICT",
+      "include_terms": [
+        { "term": "ict", "weight": 2.0 },
+        { "term": "information technology", "weight": 2.5 },
+        { "term": "information and communication technology", "weight": 4.0 },
+        { "term": "digital transformation", "weight": 1.5 },
+        { "term": "technology services", "weight": 1.5 },
+        { "term": "systems integration", "weight": 1.5 }
+      ],
+      "exclude_terms": [
+        "stationery",
+        "furniture",
+        "cleaning",
+        "catering",
+        "construction",
+        "transport"
+      ]
+    },
+    {
+      "id": "networking",
+      "label": "Networking",
+      "include_terms": [
+        { "term": "networking", "weight": 2.5 },
+        { "term": "network", "weight": 1.5 },
+        { "term": "router", "weight": 2.0 },
+        { "term": "switch", "weight": 2.0 },
+        { "term": "firewall", "weight": 2.5 },
+        { "term": "access point", "weight": 2.0 },
+        { "term": "wireless", "weight": 1.5 },
+        { "term": "wan", "weight": 1.5 },
+        { "term": "lan", "weight": 1.5 },
+        { "term": "structured cabling", "weight": 1.5 },
+        { "term": "fiber optic", "weight": 1.5 },
+        { "term": "fibre optic", "weight": 1.5 }
+      ],
+      "exclude_terms": [
+        "stationery",
+        "furniture",
+        "cleaning",
+        "catering",
+        "construction",
+        "transport"
+      ]
+    },
+    {
+      "id": "cybersecurity",
+      "label": "Cybersecurity",
+      "include_terms": [
+        { "term": "cybersecurity", "weight": 3.0 },
+        { "term": "cyber security", "weight": 3.0 },
+        { "term": "endpoint protection", "weight": 2.0 },
+        { "term": "identity and access management", "weight": 2.0 },
+        { "term": "vulnerability management", "weight": 2.0 },
+        { "term": "threat detection", "weight": 2.0 },
+        { "term": "siem", "weight": 2.0 },
+        { "term": "soc", "weight": 1.5 },
+        { "term": "mfa", "weight": 1.5 },
+        { "term": "penetration testing", "weight": 2.0 },
+        { "term": "firewall", "weight": 1.5 }
+      ],
+      "exclude_terms": [
+        "stationery",
+        "furniture",
+        "cleaning",
+        "catering",
+        "construction",
+        "transport"
+      ]
+    },
+    {
+      "id": "software",
+      "label": "Software",
+      "include_terms": [
+        { "term": "software", "weight": 2.5 },
+        { "term": "application", "weight": 1.5 },
+        { "term": "licence", "weight": 2.0 },
+        { "term": "license", "weight": 2.0 },
+        { "term": "subscription", "weight": 1.5 },
+        { "term": "saas", "weight": 2.0 },
+        { "term": "support and maintenance", "weight": 1.5 },
+        { "term": "implementation", "weight": 1.5 },
+        { "term": "development", "weight": 1.5 },
+        { "term": "upgrade", "weight": 1.0 },
+        { "term": "patching", "weight": 1.0 }
+      ],
+      "exclude_terms": [
+        "stationery",
+        "furniture",
+        "cleaning",
+        "catering",
+        "construction",
+        "transport"
+      ]
+    },
+    {
+      "id": "cloud_services",
+      "label": "Cloud Services",
+      "include_terms": [
+        { "term": "cloud services", "weight": 3.0 },
+        { "term": "cloud", "weight": 1.5 },
+        { "term": "hosting", "weight": 2.0 },
+        { "term": "managed services", "weight": 2.0 },
+        { "term": "infrastructure as a service", "weight": 2.5 },
+        { "term": "software as a service", "weight": 2.5 },
+        { "term": "platform as a service", "weight": 2.5 },
+        { "term": "backup", "weight": 1.5 },
+        { "term": "disaster recovery", "weight": 1.5 },
+        { "term": "data centre", "weight": 1.5 },
+        { "term": "datacenter", "weight": 1.5 },
+        { "term": "colocation", "weight": 1.5 }
+      ],
+      "exclude_terms": [
+        "stationery",
+        "furniture",
+        "cleaning",
+        "catering",
+        "construction",
+        "transport"
+      ]
+    },
+    {
+      "id": "commodity_hardware",
+      "label": "Commodity Hardware",
+      "include_terms": [
+        { "term": "laptop", "weight": 3.0 },
+        { "term": "desktop", "weight": 2.5 },
+        { "term": "printer", "weight": 2.5 },
+        { "term": "scanner", "weight": 2.0 },
+        { "term": "monitor", "weight": 2.0 },
+        { "term": "tablet", "weight": 2.0 },
+        { "term": "server", "weight": 2.5 },
+        { "term": "storage", "weight": 2.0 },
+        { "term": "keyboard", "weight": 1.5 },
+        { "term": "mouse", "weight": 1.5 },
+        { "term": "access point", "weight": 1.5 },
+        { "term": "switch", "weight": 1.5 },
+        { "term": "router", "weight": 1.5 }
+      ],
+      "exclude_terms": [
+        "software",
+        "subscription",
+        "managed services",
+        "implementation",
+        "consulting",
+        "training",
+        "cloud services"
+      ]
+    }
+  ]
+}
