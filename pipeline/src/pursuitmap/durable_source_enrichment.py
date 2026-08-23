@@ -219,7 +219,7 @@ def _scheduled_fetch(job: tuple, scheduled_at: float, timeout: int) -> tuple[tup
         return job, None, {}, b"", error, time.monotonic() - started
 
 
-def _process_detail_batch(connection, cache, jobs: list[tuple], run: str, config: EngineConfig, limiter: RateLimiter, response_root: Path, randomizer: Callable[[], float], sleeper: Callable[[float], None], workers: int) -> None:
+def _process_detail_batch(connection, cache, jobs: list[tuple], run: str, config: EngineConfig, limiter: RateLimiter, response_root: Path, randomizer: Callable[[], float], sleeper: Callable[[float], None], workers: int) -> int:
     cached_results = []
     network_jobs = []
     for job in jobs:
@@ -236,6 +236,7 @@ def _process_detail_batch(connection, cache, jobs: list[tuple], run: str, config
             futures[executor.submit(_scheduled_fetch, job, limiter.reserve(), config.request_timeout_seconds)] = job
         results = cached_results + [(*future.result(), False, None, None, None) for future in as_completed(futures)]
     consecutive_429 = 0
+    network_errors = 0
     for job, status, headers, payload, error, elapsed, cache_hit, digest, path, observed_ocid in results:
         job_id, _, _, _, url, params_json, expected_ocid, external_id, _, attempts, *_ = job
         attempt = attempts + 1
@@ -245,6 +246,8 @@ def _process_detail_batch(connection, cache, jobs: list[tuple], run: str, config
         else:
             if error:
                 retryable, error_class = classify_status(None, error, config.retry_statuses)
+                if error_class == "URLError":
+                    network_errors += 1
                 state = "retryable_failed" if retryable and attempt < config.max_attempts else "permanent_failed"
                 connection.execute("UPDATE request_jobs SET status = ?, attempts = ?, error_class = ?, error_message = ?, next_attempt_at = ?, updated_at = ? WHERE job_id = ?", [state, attempt, error_class, str(error), time.monotonic() + min(config.max_backoff_seconds, 2 ** attempt), utc_now(), job_id])
                 _record_event(connection, job_id, attempt, state, elapsed, None, state == "retryable_failed", error_class, str(error), None)
@@ -282,6 +285,7 @@ def _process_detail_batch(connection, cache, jobs: list[tuple], run: str, config
         else:
             connection.execute("UPDATE request_jobs SET status = 'permanent_failed', error_class = ?, error_message = ?, updated_at = ? WHERE job_id = ?", [error_class, "permanent HTTP response", utc_now(), job_id])
             _record_event(connection, job_id, attempt, "permanent_failed", elapsed, status, False, error_class, "permanent HTTP response", digest)
+    return network_errors
 
 
 def _create_sequences(connection) -> None:
@@ -476,6 +480,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     limiter = RateLimiter(config.refill_rate_per_second, config.jitter_seconds, sleeper=sleep, randomizer=randomizer)
     consecutive_429 = 0
     detail_batches = 0
+    paused_network = False
     while True:
         job = connection.execute("SELECT * FROM request_jobs WHERE run_id = ? AND status IN ('pending','retryable_failed') AND next_attempt_at <= ? ORDER BY CASE WHEN job_type = 'list' THEN 0 ELSE 1 END, created_at, job_id LIMIT 1", [run, _now()]).fetchone()
         if job is None:
@@ -486,12 +491,16 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
             continue
         if worker_count > 1 and job[2] == "detail":
             batch = connection.execute("SELECT * FROM request_jobs WHERE run_id = ? AND job_type = 'detail' AND status IN ('pending','retryable_failed') AND next_attempt_at <= ? ORDER BY created_at, job_id LIMIT ?", [run, _now(), worker_count]).fetchall()
-            _process_detail_batch(connection, cache, batch, run, config, limiter, roots.enriched / run / "responses", randomizer, sleep, worker_count)
+            network_errors = _process_detail_batch(connection, cache, batch, run, config, limiter, roots.enriched / run / "responses", randomizer, sleep, worker_count)
             detail_batches += 1
             _write_heartbeat(output_root, run, connection, phase="details", batch=detail_batches)
             if detail_batches % 100 == 0:
                 _materialize(connection, run, output_root)
                 _materialize_eligibility(connection, run, config)
+            if network_errors >= max(2, len(batch) - 1):
+                paused_network = True
+                _write_heartbeat(output_root, run, connection, phase="paused_network", batch=detail_batches)
+                break
             continue
         job_id, _, job_type, endpoint, url, params_json, expected_ocid, external_id, _, attempts, *_ = job
         attempt = attempts + 1
@@ -553,8 +562,9 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     materialized = _materialize(connection, run, output_root)
     eligibility = _materialize_eligibility(connection, run, config)
     finished_at = utc_now()
-    connection.execute("UPDATE run_metadata SET status = 'complete', finished_at = ? WHERE run_id = ?", [finished_at, run])
-    _write_heartbeat(output_root, run, connection, phase="complete", batch=detail_batches)
+    final_status = "paused_network" if paused_network else "complete"
+    connection.execute("UPDATE run_metadata SET status = ?, finished_at = ? WHERE run_id = ?", [final_status, finished_at, run])
+    _write_heartbeat(output_root, run, connection, phase=final_status, batch=detail_batches)
     counts = {row[0]: row[1] for row in connection.execute("SELECT status, count(*) FROM request_jobs WHERE run_id = ? GROUP BY 1", [run]).fetchall()}
     source_sha = connection.execute("SELECT source_snapshot_sha256 FROM run_metadata WHERE run_id = ?", [run]).fetchone()[0]
     mapping_counts = {str(row[0]).lower(): row[1] for row in connection.execute("SELECT canonical_match, count(*) FROM source_mappings WHERE run_id = ? GROUP BY 1", [run]).fetchall()}
@@ -570,7 +580,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     response_count = connection.execute("SELECT count(*) FROM source_responses WHERE run_id = ?", [run]).fetchone()[0]
     cache_hits = connection.execute("SELECT count(*) FROM request_jobs WHERE run_id = ? AND cache_hit = TRUE", [run]).fetchone()[0]
     cohort_coverage = _cohort_coverage(connection, run)
-    report = {"run_id": run, "country": country, "source_snapshot_sha256": source_sha, "source": config.source, "source_version": config.source_version, "api_version": config.api_version, "rate_policy": {"concurrency": config.concurrency, "refill_rate_per_second": config.refill_rate_per_second, "jitter_seconds": config.jitter_seconds}, "job_counts": {key: counts.get(key, 0) for key in ("succeeded", "pending", "retryable_failed", "permanent_failed")}, "mapping_counts": mapping_counts, "mapping_total": sum(mapping_counts.values()), "detail_jobs": detail_total, "detail_match_rate": materialized["rows"] / detail_total if detail_total else 0, "field_coverage": field_coverage, "cohort_coverage": cohort_coverage, "http_status_counts": status_counts, "accepted_detail_rows": materialized["rows"], "response_count": response_count, "network_requests": response_count - cache_hits, "cache_hits": cache_hits, "cache_path": str(_cache_path(roots)), "duplicate_mapping_rows": connection.execute("SELECT count(*) - count(DISTINCT ocid || '|' || external_id) FROM source_mappings WHERE run_id = ?", [run]).fetchone()[0], "eligibility": eligibility, "average_wait_seconds": wait_stats[0], "p95_wait_seconds": wait_stats[1], "effective_request_rate_per_second": response_count / elapsed_seconds if elapsed_seconds else 0, "rate_limit_events": wait_stats[2], "elapsed_seconds": elapsed_seconds, "output_root": str(output_root), "ledger": str(ledger_path), "status": "pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn"}
+    report = {"run_id": run, "country": country, "source_snapshot_sha256": source_sha, "source": config.source, "source_version": config.source_version, "api_version": config.api_version, "rate_policy": {"concurrency": config.concurrency, "refill_rate_per_second": config.refill_rate_per_second, "jitter_seconds": config.jitter_seconds}, "job_counts": {key: counts.get(key, 0) for key in ("succeeded", "pending", "retryable_failed", "permanent_failed")}, "mapping_counts": mapping_counts, "mapping_total": sum(mapping_counts.values()), "detail_jobs": detail_total, "detail_match_rate": materialized["rows"] / detail_total if detail_total else 0, "field_coverage": field_coverage, "cohort_coverage": cohort_coverage, "http_status_counts": status_counts, "accepted_detail_rows": materialized["rows"], "response_count": response_count, "network_requests": response_count - cache_hits, "cache_hits": cache_hits, "cache_path": str(_cache_path(roots)), "duplicate_mapping_rows": connection.execute("SELECT count(*) - count(DISTINCT ocid || '|' || external_id) FROM source_mappings WHERE run_id = ?", [run]).fetchone()[0], "eligibility": eligibility, "average_wait_seconds": wait_stats[0], "p95_wait_seconds": wait_stats[1], "effective_request_rate_per_second": response_count / elapsed_seconds if elapsed_seconds else 0, "rate_limit_events": wait_stats[2], "elapsed_seconds": elapsed_seconds, "output_root": str(output_root), "ledger": str(ledger_path), "status": final_status if paused_network else ("pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn")}
     write_run_manifest("source-enrich", source_sha, {"country": country, "report": report, "ledger": str(ledger_path), "output_root": str(output_root)}, run=run, working_root=roots.working)
     (output_root / "source_enrichment_execution_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     (output_root / "source_enrichment_execution_report.md").write_text(render_report(report), encoding="utf-8")

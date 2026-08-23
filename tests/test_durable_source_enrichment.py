@@ -1,4 +1,5 @@
 import json
+import urllib.error
 
 import duckdb
 
@@ -21,6 +22,30 @@ def test_retry_classification():
     assert engine.classify_status(429, None, (429,))[0] is True
     assert engine.classify_status(404, None, (429,))[0] is False
     assert engine.classify_status(None, TimeoutError(), (429,))[0] is True
+
+
+def test_detail_batch_reports_uniform_network_failure(monkeypatch, tmp_path):
+    connection = duckdb.connect()
+    for table, definition in engine.LEDGER_SCHEMA.items():
+        connection.execute(f'CREATE TABLE "{table}" ({definition})')
+    connection.execute("CREATE SEQUENCE event_seq START 1")
+    connection.execute("CREATE SEQUENCE response_seq START 1")
+    connection.execute("CREATE SEQUENCE mapping_seq START 1")
+    cache = duckdb.connect()
+    for table, definition in engine.CACHE_SCHEMA.items():
+        cache.execute(f'CREATE TABLE "{table}" ({definition})')
+    for external_id in ("1", "2"):
+        engine._insert_job(connection, "run", "detail", "/api/tender/{id}", f"https://example.test/{external_id}", {}, f"ocid-{external_id}", external_id)
+
+    def fail_fetch(url, params, timeout):
+        raise urllib.error.URLError("dns unavailable")
+
+    monkeypatch.setattr(engine, "_fetch", fail_fetch)
+    jobs = connection.execute("SELECT * FROM request_jobs ORDER BY external_id").fetchall()
+    config = engine.EngineConfig("test", "1", "1", ("/list",), "/api/tender/{id}", retry_statuses=(408, 429))
+    network_errors = engine._process_detail_batch(connection, cache, jobs, "run", config, engine.RateLimiter(100, 0, sleeper=lambda _: None), tmp_path, lambda: 0.0, lambda _: None, 2)
+    assert network_errors == 2
+    assert connection.execute("SELECT count(*) FROM request_jobs WHERE status = 'retryable_failed'").fetchone()[0] == 2
 
 
 def test_plan_run_materialize_with_fake_ppip(monkeypatch, tmp_path):
