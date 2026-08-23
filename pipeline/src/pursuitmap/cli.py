@@ -22,6 +22,7 @@ from .verification import verify_outputs
 from .document_download import plan as document_plan
 from .document_download import run as document_run
 from .document_features import extract_features, report as document_feature_report
+from .source_enrichment_benchmark import benchmark as source_enrich_benchmark
 
 
 def main() -> None:
@@ -67,6 +68,10 @@ def main() -> None:
     durable_report = durable_subparsers.add_parser("report")
     durable_report.add_argument("country", choices=["ke"])
     durable_report.add_argument("--run-id", required=True)
+    durable_benchmark = durable_subparsers.add_parser("benchmark")
+    durable_benchmark.add_argument("country", choices=["ke"])
+    durable_benchmark.add_argument("--run-id", required=True)
+    durable_benchmark.add_argument("--sample-per-level", type=int, default=20)
 
     materialize_parser = commands.add_parser("materialize")
     materialize_parser.add_argument("country", choices=["za"])
@@ -121,6 +126,8 @@ def main() -> None:
             result = source_enrich_execute(args.run_id, country=args.country)
         elif args.source_enrich_action == "resume":
             result = source_enrich_resume(args.run_id, country=args.country)
+        elif args.source_enrich_action == "benchmark":
+            result = source_enrich_benchmark(args.run_id, country=args.country, sample_per_level=args.sample_per_level)
         else:
             result = source_enrich_report(args.run_id, country=args.country)
     elif args.command in {"report", "profile"}:
