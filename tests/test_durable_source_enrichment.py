@@ -48,6 +48,15 @@ def test_detail_batch_reports_uniform_network_failure(monkeypatch, tmp_path):
     assert connection.execute("SELECT count(*) FROM request_jobs WHERE status = 'retryable_failed'").fetchone()[0] == 2
 
 
+def test_resume_recovers_operator_interrupted_list_job():
+    connection = duckdb.connect()
+    connection.execute(f'CREATE TABLE request_jobs ({engine.LEDGER_SCHEMA["request_jobs"]})')
+    engine._insert_job(connection, "run", "list", "/api/list", "https://example.test/list", {"page": 3})
+    connection.execute("UPDATE request_jobs SET status = 'permanent_failed', error_class = 'RuntimeError', error_message = 'Query interrupted'")
+    assert engine._recover_interrupted_jobs(connection, "run") == 1
+    assert connection.execute("SELECT status, error_class FROM request_jobs").fetchone() == ("pending", None)
+
+
 def test_plan_run_materialize_with_fake_ppip(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "DATA_ROOT", tmp_path / "data")
     roots = paths.country_paths("ke")

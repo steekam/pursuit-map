@@ -129,6 +129,11 @@ def _create_ledger(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute("ALTER TABLE request_jobs ADD COLUMN IF NOT EXISTS cache_hit BOOLEAN DEFAULT FALSE")
 
 
+def _recover_interrupted_jobs(connection: duckdb.DuckDBPyConnection, run: str) -> int:
+    result = connection.execute("UPDATE request_jobs SET status = 'pending', next_attempt_at = 0, error_class = NULL, error_message = NULL, updated_at = ? WHERE run_id = ? AND status = 'permanent_failed' AND error_class = 'RuntimeError' AND error_message = 'Query interrupted'", [utc_now(), run])
+    return result.fetchone()[0] if result.description else 0
+
+
 def _insert_job(connection: duckdb.DuckDBPyConnection, run: str, job_type: str, endpoint: str, url: str, params: dict, expected_ocid: str | None = None, external_id: str | None = None) -> None:
     job_id = _idempotency(run, job_type, endpoint, json.dumps(params, sort_keys=True), expected_ocid, external_id)
     now = utc_now()
@@ -475,6 +480,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     connection = duckdb.connect(str(ledger_path))
     _create_ledger(connection)
     _create_sequences(connection)
+    _recover_interrupted_jobs(connection, run)
     cache = _cache_connection(roots)
     _backfill_cache_from_run(connection, cache, run)
     worker_count = workers or config.concurrency
