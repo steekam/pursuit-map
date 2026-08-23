@@ -147,6 +147,7 @@ def _write_heartbeat(output_root: Path, run: str, connection, *, phase: str, bat
     accepted = connection.execute("SELECT count(*) FROM request_jobs WHERE run_id = ? AND job_type = 'detail' AND status = 'succeeded'", [run]).fetchone()[0]
     heartbeat = {
         "run_id": run,
+        "pid": os.getpid(),
         "phase": phase,
         "batch": batch,
         "updated_at": utc_now(),
@@ -607,6 +608,15 @@ def status(run: str, country: str = "ke") -> dict:
         age = max(0.0, (datetime.now(UTC) - updated).total_seconds())
         value["heartbeat_age_seconds"] = round(age, 1)
         value["heartbeat_stale"] = age > 300
+        try:
+            os.kill(int(value["pid"]), 0)
+            process_alive = True
+        except (OSError, ValueError, KeyError):
+            process_alive = False
+        value["process_alive"] = process_alive
+        if value.get("phase") != "complete" and not process_alive:
+            value["last_phase"] = value["phase"]
+            value["phase"] = "stopped"
         return value
     report_path = output_root / "source_enrichment_execution_report.json"
     if report_path.exists():
