@@ -18,6 +18,7 @@ from .durable_source_enrichment import compatibility_enrich_source
 from .durable_source_enrichment import plan as source_enrich_plan
 from .durable_source_enrichment import report as source_enrich_report
 from .durable_source_enrichment import resume as source_enrich_resume
+from .durable_source_enrichment import status as source_enrich_status
 from .verification import verify_outputs
 from .document_download import plan as document_plan
 from .document_download import run as document_run
@@ -70,6 +71,9 @@ def main() -> None:
     durable_report = durable_subparsers.add_parser("report")
     durable_report.add_argument("country", choices=["ke"])
     durable_report.add_argument("--run-id", required=True)
+    durable_status = durable_subparsers.add_parser("status")
+    durable_status.add_argument("country", choices=["ke"])
+    durable_status.add_argument("--run-id", required=True)
     durable_benchmark = durable_subparsers.add_parser("benchmark")
     durable_benchmark.add_argument("country", choices=["ke"])
     durable_benchmark.add_argument("--run-id", required=True)
@@ -134,6 +138,8 @@ def main() -> None:
             if len(args.rates) != len(args.workers):
                 parser.error("--rates and --workers must have the same length")
             result = source_enrich_benchmark(args.run_id, country=args.country, sample_per_level=args.sample_per_level, rates=tuple(args.rates), concurrency=tuple(args.workers))
+        elif args.source_enrich_action == "status":
+            result = source_enrich_status(args.run_id, country=args.country)
         else:
             result = source_enrich_report(args.run_id, country=args.country)
     elif args.command in {"report", "profile"}:

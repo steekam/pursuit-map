@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import random
 import threading
 import time
@@ -138,6 +139,26 @@ def _ledger_path(roots, run: str) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     (path / "responses").mkdir(exist_ok=True)
     return path / "ledger.duckdb"
+
+
+def _write_heartbeat(output_root: Path, run: str, connection, *, phase: str, batch: int = 0) -> dict:
+    counts = {row[0]: row[1] for row in connection.execute("SELECT status, count(*) FROM request_jobs WHERE run_id = ? GROUP BY 1", [run]).fetchall()}
+    mappings = connection.execute("SELECT count(*) FROM source_mappings WHERE run_id = ?", [run]).fetchone()[0]
+    accepted = connection.execute("SELECT count(*) FROM request_jobs WHERE run_id = ? AND job_type = 'detail' AND status = 'succeeded'", [run]).fetchone()[0]
+    heartbeat = {
+        "run_id": run,
+        "phase": phase,
+        "batch": batch,
+        "updated_at": utc_now(),
+        "job_counts": counts,
+        "mapping_count": mappings,
+        "accepted_detail_rows": accepted,
+        "materialization": str(output_root / "source_enrichment.parquet"),
+    }
+    temporary = output_root / "progress.json.tmp"
+    temporary.write_text(json.dumps(heartbeat, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, output_root / "progress.json")
+    return heartbeat
 
 
 def plan(country: str = "ke", *, limit: int = 25, config_path: Path | None = None) -> dict:
@@ -441,13 +462,17 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     cache = _cache_connection(roots)
     _backfill_cache_from_run(connection, cache, run)
     worker_count = workers or config.concurrency
+    output_root = roots.enriched / run
+    output_root.mkdir(parents=True, exist_ok=True)
     connection.execute("UPDATE run_metadata SET status = 'running', resume_count = resume_count + 1 WHERE run_id = ?", [run])
+    _write_heartbeat(output_root, run, connection, phase="running")
     started_at = connection.execute("SELECT started_at FROM run_metadata WHERE run_id = ?", [run]).fetchone()[0]
     if not started_at:
         started_at = utc_now()
         connection.execute("UPDATE run_metadata SET started_at = ? WHERE run_id = ?", [started_at, run])
     limiter = RateLimiter(config.refill_rate_per_second, config.jitter_seconds, sleeper=sleep, randomizer=randomizer)
     consecutive_429 = 0
+    detail_batches = 0
     while True:
         job = connection.execute("SELECT * FROM request_jobs WHERE run_id = ? AND status IN ('pending','retryable_failed') AND next_attempt_at <= ? ORDER BY job_type, created_at, job_id LIMIT 1", [run, _now()]).fetchone()
         if job is None:
@@ -459,6 +484,11 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
         if worker_count > 1 and job[2] == "detail":
             batch = connection.execute("SELECT * FROM request_jobs WHERE run_id = ? AND job_type = 'detail' AND status IN ('pending','retryable_failed') AND next_attempt_at <= ? ORDER BY created_at, job_id LIMIT ?", [run, _now(), worker_count]).fetchall()
             _process_detail_batch(connection, cache, batch, run, config, limiter, roots.enriched / run / "responses", randomizer, sleep, worker_count)
+            detail_batches += 1
+            _write_heartbeat(output_root, run, connection, phase="details", batch=detail_batches)
+            if detail_batches % 100 == 0:
+                _materialize(connection, run, output_root)
+                _materialize_eligibility(connection, run, config)
             continue
         job_id, _, job_type, endpoint, url, params_json, expected_ocid, external_id, _, attempts, *_ = job
         attempt = attempts + 1
@@ -491,6 +521,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
                 if job_type == "list":
                     detail_limit = connection.execute("SELECT detail_limit FROM run_metadata WHERE run_id = ?", [run]).fetchone()[0]
                     _list_success(connection, run, job, payload, digest, config, detail_limit)
+                    _write_heartbeat(output_root, run, connection, phase="mapping")
                 consecutive_429 = 0
                 continue
             retryable, error_class = classify_status(status, None, config.retry_statuses)
@@ -516,11 +547,11 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
             status = "retryable_failed" if retryable and attempt < config.max_attempts else "permanent_failed"
             connection.execute("UPDATE request_jobs SET status = ?, error_class = ?, error_message = ?, next_attempt_at = ?, updated_at = ? WHERE job_id = ?", [status, error_class, str(error), _now() + min(config.max_backoff_seconds, 2 ** attempt), utc_now(), job_id])
             _record_event(connection, job_id, attempt, status, wait_seconds, None, status == "retryable_failed", error_class, str(error), None)
-    output_root = roots.enriched / run
     materialized = _materialize(connection, run, output_root)
     eligibility = _materialize_eligibility(connection, run, config)
     finished_at = utc_now()
     connection.execute("UPDATE run_metadata SET status = 'complete', finished_at = ? WHERE run_id = ?", [finished_at, run])
+    _write_heartbeat(output_root, run, connection, phase="complete", batch=detail_batches)
     counts = {row[0]: row[1] for row in connection.execute("SELECT status, count(*) FROM request_jobs WHERE run_id = ? GROUP BY 1", [run]).fetchall()}
     source_sha = connection.execute("SELECT source_snapshot_sha256 FROM run_metadata WHERE run_id = ?", [run]).fetchone()[0]
     mapping_counts = {str(row[0]).lower(): row[1] for row in connection.execute("SELECT canonical_match, count(*) FROM source_mappings WHERE run_id = ? GROUP BY 1", [run]).fetchall()}
@@ -565,6 +596,28 @@ def report(run: str, country: str = "ke") -> dict:
     if not path.exists():
         raise FileNotFoundError(path)
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def status(run: str, country: str = "ke") -> dict:
+    output_root = country_paths(country).enriched / run
+    progress = output_root / "progress.json"
+    if progress.exists():
+        return json.loads(progress.read_text(encoding="utf-8"))
+    report_path = output_root / "source_enrichment_execution_report.json"
+    if report_path.exists():
+        value = json.loads(report_path.read_text(encoding="utf-8"))
+        return {"run_id": run, "phase": value.get("status", "complete"), "job_counts": value.get("job_counts", {}), "accepted_detail_rows": value.get("accepted_detail_rows", 0), "materialization": str(output_root / "source_enrichment.parquet")}
+    ledger = output_root / "ledger.duckdb"
+    if ledger.exists():
+        try:
+            connection = duckdb.connect(str(ledger), read_only=True)
+            counts = {row[0]: row[1] for row in connection.execute("SELECT status, count(*) FROM request_jobs WHERE run_id = ? GROUP BY 1", [run]).fetchall()}
+            accepted = connection.execute("SELECT count(*) FROM request_jobs WHERE run_id = ? AND job_type = 'detail' AND status = 'succeeded'", [run]).fetchone()[0]
+            connection.close()
+            return {"run_id": run, "phase": "legacy_ledger", "job_counts": counts, "accepted_detail_rows": accepted, "materialization": str(output_root / "source_enrichment.parquet"), "warning": "Live reads may contend with an active DuckDB writer; use progress.json once the run resumes."}
+        except duckdb.IOException:
+            return {"run_id": run, "phase": "writer_active", "message": "No sidecar exists yet; the DuckDB writer is active."}
+    return {"run_id": run, "phase": "not_started", "message": "No progress sidecar exists"}
 
 
 def resume(run: str, **kwargs) -> dict:

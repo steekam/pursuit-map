@@ -52,6 +52,9 @@ def test_plan_run_materialize_with_fake_ppip(monkeypatch, tmp_path):
     assert result["detail_match_rate"] == 1.0
     assert result["job_counts"]["permanent_failed"] == 0
     assert (roots.enriched / planned["run_id"] / "source_enrichment.parquet").exists()
+    progress = engine.status(planned["run_id"], country="ke")
+    assert progress["phase"] == "complete"
+    assert progress["accepted_detail_rows"] == 1
     eligibility = duckdb.connect().execute("SELECT state, count(*) FROM read_parquet(?) GROUP BY 1", [str(roots.enriched / planned["run_id"] / "enrichment_eligibility.parquet")]).fetchall()
     assert dict(eligibility) == {"source_only": 1, "validated_detail": 1}
 
