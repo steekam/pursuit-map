@@ -16,7 +16,7 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 | Phase | Status | Evidence | Next decision |
 | --- | --- | --- | --- |
 | Phase 0 — domain and source understanding | complete | [domain glossary](../domain/glossary.md), [South Africa OCDS notes](../domain/south-africa-ocds.md), [ADR-001](../architecture/adr-001-local-first-foundation.md) | Keep South Africa as the baseline source for this milestone. |
-| Kenya source comparison | in progress | [Kenya PPIP source notes](../domain/kenya-ppip.md), [comparison build log](../build-log/2026-08-23-kenya-source-comparison.md), [normalization benchmark](../build-log/2026-08-23-kenya-normalization-benchmark.md) | Implement and verify the vectorized canonical adapter. |
+| Kenya source comparison | complete | [Kenya PPIP source notes](../domain/kenya-ppip.md), [comparison build log](../build-log/2026-08-23-kenya-source-comparison.md), [normalization benchmark](../build-log/2026-08-23-kenya-normalization-benchmark.md), [adapter build log](../build-log/2026-08-23-kenya-vectorized-adapter.md) | Decide which source enrichments justify the next pipeline stage. |
 | Phase 1 — reproducible data foundation | complete | [canonical schema](../domain/canonical-schema.md), [quality report](../build-log/2026-08-23-phase-0-1-foundation.md), commits `78af6cb`, `183c975` | Whether document acquisition or entity review has higher value. |
 | Phase 1 — descriptive analytics | complete | [descriptive SQL](../../analytics/queries/phase1_descriptive.sql), materialized marts, commit `4759e71` | Which explorer views deserve a product surface. |
 | Phase 1.5 — deterministic retrieval lab | in progress | [ICT taxonomy](../../config/verticals/ict.json), [construction taxonomy](../../config/verticals/construction.json), [healthcare taxonomy](../../config/verticals/healthcare.json), [vertical comparison](../build-log/2026-08-23-vertical-comparison.md) | Build a reviewed challenge set before making accuracy claims. |
@@ -41,6 +41,7 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 - Deterministic ICT retrieval returns 7,529 candidates on the current snapshot.
 - The test suite has 13 passing tests.
 - Cross-session rules live in [`AGENTS.md`](../../AGENTS.md) and [`pipeline-contract.json`](../../config/pipeline-contract.json).
+- Kenya canonical normalization uses a DuckDB vectorized adapter and reconciles raw release, tender, award, contract, and award-supplier counts.
 
 ## Current gaps
 
@@ -49,12 +50,13 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 - Supplier ID `0` remains in 4,326 award-supplier rows.
 - Contract timing has 171 missing period starts and 173 sentinel or missing period fields.
 - Documents contain metadata and URLs. Binary acquisition and extraction are deferred.
+- Kenya has 0 documents, 0 planning objects, 0 plan items, and 0 tender amounts in the canonical snapshot.
 - Entity merging, prediction, lead scoring, API, and browser UI are not implemented.
 
 ## Immediate next work
 
 1. Create a small reviewed retrieval challenge set from fixtures and current-source candidates.
 2. Compare title-only, title-plus-description, category, and full-metadata retrieval against the set.
-3. Measure the value of document acquisition, entity resolution, and explorer implementation.
+3. Measure the value of source enrichment, document acquisition, entity resolution, and explorer implementation.
 
 Every completed step should update this tracker and add a build-log entry. The tracker records project state; the build log records the reasoning and measurements behind state changes.

@@ -188,6 +188,14 @@ def _identity_audit(rows: dict[str, list[tuple]]) -> list[tuple]:
 
 
 def normalize(source_path: Path | None = None, *, country: str = "za") -> dict:
+    if country == "ke":
+        from .normalize_vectorized import normalize_vectorized
+
+        roots = country_paths(country)
+        source_path = source_path or next((path for path in (roots.raw / "ocds_full.jsonl.gz", roots.raw / "ocds_full.jsonl") if path.exists()), roots.raw / "ocds_full.jsonl.gz")
+        if not source_path.exists():
+            raise FileNotFoundError(f"Source not found: {source_path}. Run `pursuitmap ingest {country}` first.")
+        return normalize_vectorized(source_path, country=country)
     ensure_data_dirs(country)
     roots = country_paths(country)
     source_path = source_path or next((path for path in (roots.raw / "ocds_full.jsonl.gz", roots.raw / "ocds_full.jsonl") if path.exists()), roots.raw / "ocds_full.jsonl.gz")

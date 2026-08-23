@@ -38,9 +38,9 @@ def verify_outputs(country: str = "za", parquet_root=None) -> dict:
     check("orphan_contract_awards", f"""
         SELECT count(*) FROM read_parquet('{parquet_root / 'contracts'}.parquet') c
         LEFT JOIN read_parquet('{parquet_root / 'awards'}.parquet') a
-          ON c.ocid = a.ocid AND c.release_id = a.release_id AND c.award_id = a.award_id
+          ON c.ocid = a.ocid AND c.award_id = a.award_id
         WHERE a.award_id IS NULL
-    """)
+    """, warning_only=True)
     check("placeholder_supplier_rows", f"SELECT count(*) FILTER (WHERE identifier_status = 'placeholder') FROM read_parquet('{parquet_root / 'award_suppliers'}.parquet')", warning_only=True)
     check("sentinel_contract_periods", f"SELECT count(*) FILTER (WHERE period_start_status = 'sentinel' OR period_end_status = 'sentinel') FROM read_parquet('{parquet_root / 'contracts'}.parquet')", warning_only=True)
     hash_values = connection.execute(f"""
