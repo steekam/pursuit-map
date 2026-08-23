@@ -26,6 +26,7 @@ LEDGER_SCHEMA = {
     "request_events": "event_id BIGINT, job_id VARCHAR, attempt INTEGER, state VARCHAR, wait_seconds DOUBLE, http_status INTEGER, retryable BOOLEAN, error_class VARCHAR, error_message VARCHAR, response_hash VARCHAR, created_at VARCHAR",
     "source_mappings": "mapping_id BIGINT, run_id VARCHAR, list_endpoint VARCHAR, list_page INTEGER, list_response_hash VARCHAR, external_id VARCHAR, ocid VARCHAR, tender_ref VARCHAR, canonical_match BOOLEAN, created_at VARCHAR",
     "source_responses": "response_id BIGINT, run_id VARCHAR, job_id VARCHAR, url VARCHAR, retrieved_at VARCHAR, http_status INTEGER, content_type VARCHAR, response_hash VARCHAR, response_path VARCHAR, response_bytes BIGINT",
+    "enrichment_eligibility": "run_id VARCHAR, source_snapshot_sha256 VARCHAR, ocid VARCHAR, external_id VARCHAR, state VARCHAR, reason VARCHAR, priority VARCHAR, source_version VARCHAR, checked_at VARCHAR, next_review_at VARCHAR, mapping_id BIGINT, detail_job_id VARCHAR, release_date VARCHAR",
 }
 CACHE_SCHEMA = {
     "cached_responses": "cache_key VARCHAR PRIMARY KEY, job_type VARCHAR, url VARCHAR, params_json VARCHAR, expected_ocid VARCHAR, http_status INTEGER, content_type VARCHAR, response_hash VARCHAR, response_path VARCHAR, observed_ocid VARCHAR, source_run_id VARCHAR, cached_at VARCHAR",
@@ -280,6 +281,52 @@ def _cohort_coverage(connection, run: str) -> list[dict]:
     return [{"release_month": row[0], "canonical_records": row[1], "matched_ocids": row[2], "coverage": row[3] or 0} for row in rows]
 
 
+def _eligibility_rows(canonical_rows: list[tuple], mapping_rows: list[tuple], job_rows: list[tuple], *, run: str, source_sha: str, source_version: str, checked_at: str) -> list[tuple]:
+    """Build a reversible triage view. Unmapped records remain eligible; they are not dead."""
+    mappings: dict[str, list[tuple]] = {}
+    for row in mapping_rows:
+        mappings.setdefault(row[1], []).append(row)
+    jobs = {row[0]: row for row in job_rows}
+    rows: list[tuple] = []
+    for ocid, release_date in canonical_rows:
+        if not ocid:
+            rows.append((run, source_sha, ocid, None, "permanent_skip", "missing_canonical_ocid", "unknown", source_version, checked_at, None, None, None, release_date))
+            continue
+        candidates = [row for row in mappings.get(ocid, []) if row[3]]
+        if not candidates:
+            rows.append((run, source_sha, ocid, None, "eligible", "not_returned_by_current_list_pages", "recent" if release_date else "unknown", source_version, checked_at, None, None, None, release_date))
+            continue
+        mapping_id, _, external_id, _, _, mapping_time = candidates[0]
+        detail = next((job for job in jobs.values() if job[1] == external_id), None)
+        if detail and detail[2] == "succeeded":
+            state, reason, next_review = "validated_detail", "detail_ocid_validated", None
+        elif detail and detail[2] in {"pending", "running", "retryable_failed"}:
+            state, reason, next_review = "retry_later", detail[3] or detail[2], None
+        else:
+            state, reason, next_review = "permanent_skip", (detail[3] if detail else "detail_job_missing") or "permanent_detail_failure", None
+        rows.append((run, source_sha, ocid, external_id, state, reason, "recent" if release_date else "unknown", source_version, checked_at, next_review, mapping_id, detail[0] if detail else None, release_date))
+    known_ocids = {row[0] for row in canonical_rows if row[0]}
+    for mapping_id, ocid, external_id, canonical_match, _, mapping_time in mapping_rows:
+        if not canonical_match and ocid not in known_ocids:
+            rows.append((run, source_sha, ocid, external_id, "source_only", "valid_ppip_mapping_without_canonical_match", "unknown", source_version, checked_at, None, mapping_id, None, None))
+    return rows
+
+
+def _materialize_eligibility(connection, run: str, config: EngineConfig) -> dict:
+    roots = country_paths("ke")
+    source_sha = connection.execute("SELECT source_snapshot_sha256 FROM run_metadata WHERE run_id = ?", [run]).fetchone()[0]
+    canonical = canonical_root("ke")
+    canonical_rows = connection.execute("SELECT ocid, release_date FROM read_parquet(?)", [str(canonical / "releases.parquet")]).fetchall()
+    mapping_rows = connection.execute("SELECT mapping_id, ocid, external_id, canonical_match, created_at, created_at FROM source_mappings WHERE run_id = ?", [run]).fetchall()
+    job_rows = connection.execute("SELECT job_id, external_id, status, error_class FROM request_jobs WHERE run_id = ? AND job_type = 'detail'", [run]).fetchall()
+    rows = _eligibility_rows(canonical_rows, mapping_rows, job_rows, run=run, source_sha=source_sha, source_version=config.source_version, checked_at=utc_now())
+    table = "enrichment_eligibility"
+    connection.execute(f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM (VALUES {','.join('(' + ','.join('?' for _ in range(13)) + ')' for _ in rows)}) AS t(run_id,source_snapshot_sha256,ocid,external_id,state,reason,priority,source_version,checked_at,next_review_at,mapping_id,detail_job_id,release_date)" if rows else "CREATE OR REPLACE TABLE enrichment_eligibility AS SELECT CAST(NULL AS VARCHAR) AS run_id WHERE FALSE", [value for row in rows for value in row] if rows else [])
+    output = roots.enriched / run / "enrichment_eligibility.parquet"
+    connection.execute("COPY enrichment_eligibility TO ? (FORMAT PARQUET, COMPRESSION ZSTD)", [str(output)])
+    return {"output": str(output), "counts": {str(row[0]): row[1] for row in connection.execute("SELECT state, count(*) FROM enrichment_eligibility GROUP BY 1 ORDER BY 1").fetchall()}, "rows": len(rows)}
+
+
 def execute(run: str, *, country: str = "ke", config_path: Path | None = None, sleep: Callable[[float], None] = time.sleep, randomizer: Callable[[], float] = random.random) -> dict:
     roots = country_paths(country)
     config = load_config(config_path)
@@ -363,6 +410,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
             _record_event(connection, job_id, attempt, status, wait_seconds, None, status == "retryable_failed", error_class, str(error), None)
     output_root = roots.enriched / run
     materialized = _materialize(connection, run, output_root)
+    eligibility = _materialize_eligibility(connection, run, config)
     finished_at = utc_now()
     connection.execute("UPDATE run_metadata SET status = 'complete', finished_at = ? WHERE run_id = ?", [finished_at, run])
     counts = {row[0]: row[1] for row in connection.execute("SELECT status, count(*) FROM request_jobs WHERE run_id = ? GROUP BY 1", [run]).fetchall()}
@@ -380,7 +428,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     response_count = connection.execute("SELECT count(*) FROM source_responses WHERE run_id = ?", [run]).fetchone()[0]
     cache_hits = connection.execute("SELECT count(*) FROM request_jobs WHERE run_id = ? AND cache_hit = TRUE", [run]).fetchone()[0]
     cohort_coverage = _cohort_coverage(connection, run)
-    report = {"run_id": run, "country": country, "source_snapshot_sha256": source_sha, "source": config.source, "source_version": config.source_version, "api_version": config.api_version, "rate_policy": {"concurrency": config.concurrency, "refill_rate_per_second": config.refill_rate_per_second, "jitter_seconds": config.jitter_seconds}, "job_counts": {key: counts.get(key, 0) for key in ("succeeded", "pending", "retryable_failed", "permanent_failed")}, "mapping_counts": mapping_counts, "mapping_total": sum(mapping_counts.values()), "detail_jobs": detail_total, "detail_match_rate": materialized["rows"] / detail_total if detail_total else 0, "field_coverage": field_coverage, "cohort_coverage": cohort_coverage, "http_status_counts": status_counts, "accepted_detail_rows": materialized["rows"], "response_count": response_count, "network_requests": response_count - cache_hits, "cache_hits": cache_hits, "cache_path": str(_cache_path(roots)), "duplicate_mapping_rows": connection.execute("SELECT count(*) - count(DISTINCT ocid || '|' || external_id) FROM source_mappings WHERE run_id = ?", [run]).fetchone()[0], "average_wait_seconds": wait_stats[0], "p95_wait_seconds": wait_stats[1], "effective_request_rate_per_second": response_count / elapsed_seconds if elapsed_seconds else 0, "rate_limit_events": wait_stats[2], "elapsed_seconds": elapsed_seconds, "output_root": str(output_root), "ledger": str(ledger_path), "status": "pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn"}
+    report = {"run_id": run, "country": country, "source_snapshot_sha256": source_sha, "source": config.source, "source_version": config.source_version, "api_version": config.api_version, "rate_policy": {"concurrency": config.concurrency, "refill_rate_per_second": config.refill_rate_per_second, "jitter_seconds": config.jitter_seconds}, "job_counts": {key: counts.get(key, 0) for key in ("succeeded", "pending", "retryable_failed", "permanent_failed")}, "mapping_counts": mapping_counts, "mapping_total": sum(mapping_counts.values()), "detail_jobs": detail_total, "detail_match_rate": materialized["rows"] / detail_total if detail_total else 0, "field_coverage": field_coverage, "cohort_coverage": cohort_coverage, "http_status_counts": status_counts, "accepted_detail_rows": materialized["rows"], "response_count": response_count, "network_requests": response_count - cache_hits, "cache_hits": cache_hits, "cache_path": str(_cache_path(roots)), "duplicate_mapping_rows": connection.execute("SELECT count(*) - count(DISTINCT ocid || '|' || external_id) FROM source_mappings WHERE run_id = ?", [run]).fetchone()[0], "eligibility": eligibility, "average_wait_seconds": wait_stats[0], "p95_wait_seconds": wait_stats[1], "effective_request_rate_per_second": response_count / elapsed_seconds if elapsed_seconds else 0, "rate_limit_events": wait_stats[2], "elapsed_seconds": elapsed_seconds, "output_root": str(output_root), "ledger": str(ledger_path), "status": "pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn"}
     write_run_manifest("source-enrich", source_sha, {"country": country, "report": report, "ledger": str(ledger_path), "output_root": str(output_root)}, run=run, working_root=roots.working)
     (output_root / "source_enrichment_execution_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     (output_root / "source_enrichment_execution_report.md").write_text(render_report(report), encoding="utf-8")
@@ -399,6 +447,8 @@ def render_report(report: dict) -> str:
     lines.extend(f"- `{key}`: {value}" for key, value in report["field_coverage"].items())
     lines.extend(["", "## Canonical release-month coverage", ""])
     lines.extend(f"- `{row['release_month']}`: {row['matched_ocids']}/{row['canonical_records']} ({row['coverage']:.3%})" for row in report["cohort_coverage"])
+    lines.extend(["", "## Eligibility triage", "", f"- Output: `{report['eligibility']['output']}`"])
+    lines.extend(f"- `{key}`: {value}" for key, value in report["eligibility"]["counts"].items())
     return "\n".join(lines)
 
 
