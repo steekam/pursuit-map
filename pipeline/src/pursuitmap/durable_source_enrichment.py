@@ -602,7 +602,12 @@ def status(run: str, country: str = "ke") -> dict:
     output_root = country_paths(country).enriched / run
     progress = output_root / "progress.json"
     if progress.exists():
-        return json.loads(progress.read_text(encoding="utf-8"))
+        value = json.loads(progress.read_text(encoding="utf-8"))
+        updated = datetime.fromisoformat(value["updated_at"])
+        age = max(0.0, (datetime.now(UTC) - updated).total_seconds())
+        value["heartbeat_age_seconds"] = round(age, 1)
+        value["heartbeat_stale"] = age > 300
+        return value
     report_path = output_root / "source_enrichment_execution_report.json"
     if report_path.exists():
         value = json.loads(report_path.read_text(encoding="utf-8"))
