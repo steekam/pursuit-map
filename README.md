@@ -34,7 +34,7 @@ tests/          Cross-project and pipeline tests
 
 The raw artifact is stored under `data/raw/` with a SHA-256 manifest. Each normalization run writes canonical Parquet under `data/parquet/south_africa/<normalize-run-id>/`. The matching DuckDB file is under the run directory. Reports, marts, and manifests use versioned run directories. Compatibility files point to the latest result. Git ignores generated data. `data/working/south_africa/normalization_manifest.json` selects the latest canonical run.
 
-`pursuitmap profile ke` currently profiles the raw Kenya snapshot. Kenya canonical normalization waits for a streaming performance pass.
+`pursuitmap profile ke` profiles the canonical Kenya snapshot. Use `pursuitmap source-enrich plan ke --limit 25` to create a resumable PPIP enrichment run.
 
 Cross-session operating rules live in [`AGENTS.md`](AGENTS.md). The machine-readable pipeline contract is [`config/pipeline-contract.json`](config/pipeline-contract.json); tests enforce its required layers, operations, determinism, and boundaries.
 

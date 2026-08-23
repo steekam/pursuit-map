@@ -51,6 +51,15 @@
       "deterministic": true,
       "source_preserving": true
     },
+    "source-enrich": {
+      "input": "canonical_facts",
+      "outputs": ["derived_observations", "raw_source_truth"],
+      "versioned_output": true,
+      "manifest": true,
+      "deterministic": true,
+      "deterministic_from_captured_responses": true,
+      "durable_ledger": "duckdb"
+    },
     "materialize": {
       "input": "canonical_facts",
       "outputs": ["derived_observations", "intelligence_outputs"],

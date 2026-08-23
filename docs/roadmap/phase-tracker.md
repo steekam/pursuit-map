@@ -52,6 +52,7 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 - Documents contain metadata and URLs. Binary acquisition and extraction are deferred.
 - Kenya has 0 documents, 0 planning objects, 0 plan items, and 0 tender amounts in the canonical snapshot.
 - Kenya quality flags are materialized in a source-preserving enrichment table with rule version `kenya-quality-1`.
+- Kenya PPIP source enrichment has a durable DuckDB ledger and passed the first 25-limit pilot with 100% detail OCID validation.
 - Entity merging, prediction, lead scoring, API, and browser UI are not implemented.
 
 ## Immediate next work

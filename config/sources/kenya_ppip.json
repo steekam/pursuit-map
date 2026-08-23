@@ -1,0 +1,20 @@
+{
+  "source": "kenya_ppra_ppip",
+  "source_version": "2026-08-23",
+  "api_version": "public-json",
+  "list_endpoints": [
+    "/api/active-tenders",
+    "/api/closed-tenders"
+  ],
+  "detail_endpoint": "/api/tender/{id}",
+  "per_page": 100,
+  "request_timeout_seconds": 30,
+  "concurrency": 1,
+  "refill_rate_per_second": 1.0,
+  "jitter_seconds": 1.0,
+  "max_attempts": 6,
+  "max_backoff_seconds": 600,
+  "circuit_breaker_429_count": 3,
+  "circuit_breaker_pause_seconds": 60,
+  "retry_statuses": [408, 425, 429, 500, 502, 503, 504]
+}

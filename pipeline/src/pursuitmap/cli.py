@@ -12,6 +12,12 @@ from .report import create_report
 from .retrieval import available_verticals
 from .search import search
 from .source import ingest
+from .source_enrichment import enrich_source
+from .durable_source_enrichment import execute as source_enrich_execute
+from .durable_source_enrichment import compatibility_enrich_source
+from .durable_source_enrichment import plan as source_enrich_plan
+from .durable_source_enrichment import report as source_enrich_report
+from .durable_source_enrichment import resume as source_enrich_resume
 from .verification import verify_outputs
 
 
@@ -37,6 +43,27 @@ def main() -> None:
 
     enrich_parser = commands.add_parser("enrich")
     enrich_parser.add_argument("country", choices=["za", "ke"])
+
+    source_enrich_parser = commands.add_parser("enrich-source")
+    source_enrich_parser.add_argument("country", choices=["ke"])
+    source_enrich_parser.add_argument("--limit", type=int, default=20)
+    source_enrich_parser.add_argument("--timeout", type=int, default=30)
+    source_enrich_parser.add_argument("--ocid", action="append", dest="ocids")
+
+    durable_parser = commands.add_parser("source-enrich")
+    durable_subparsers = durable_parser.add_subparsers(dest="source_enrich_action", required=True)
+    durable_plan = durable_subparsers.add_parser("plan")
+    durable_plan.add_argument("country", choices=["ke"])
+    durable_plan.add_argument("--limit", type=int, default=25)
+    durable_run = durable_subparsers.add_parser("run")
+    durable_run.add_argument("country", choices=["ke"])
+    durable_run.add_argument("--run-id", required=True)
+    durable_resume = durable_subparsers.add_parser("resume")
+    durable_resume.add_argument("country", choices=["ke"])
+    durable_resume.add_argument("--run-id", required=True)
+    durable_report = durable_subparsers.add_parser("report")
+    durable_report.add_argument("country", choices=["ke"])
+    durable_report.add_argument("--run-id", required=True)
 
     materialize_parser = commands.add_parser("materialize")
     materialize_parser.add_argument("country", choices=["za"])
@@ -64,6 +91,17 @@ def main() -> None:
         result = normalize(args.source_path, country=args.country)
     elif args.command == "enrich":
         result = enrich(args.country)
+    elif args.command == "enrich-source":
+        result = compatibility_enrich_source(args.country, limit=args.limit)
+    elif args.command == "source-enrich":
+        if args.source_enrich_action == "plan":
+            result = source_enrich_plan(args.country, limit=args.limit)
+        elif args.source_enrich_action == "run":
+            result = source_enrich_execute(args.run_id, country=args.country)
+        elif args.source_enrich_action == "resume":
+            result = source_enrich_resume(args.run_id, country=args.country)
+        else:
+            result = source_enrich_report(args.run_id, country=args.country)
     elif args.command in {"report", "profile"}:
         result = create_report(args.country)
     elif args.command == "materialize":
