@@ -32,8 +32,8 @@ def _job_id(url: str) -> str:
     return _sha256(url.encode())[:32]
 
 
-def normalize_url(value: str) -> str:
-    parsed = urllib.parse.urlsplit(value.strip())
+def normalize_url(value: str, base_url: str = "https://tenders.go.ke") -> str:
+    parsed = urllib.parse.urlsplit(urllib.parse.urljoin(base_url, value.strip()))
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("invalid_document_url")
     return urllib.parse.urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path, parsed.query, ""))
@@ -52,7 +52,7 @@ def _attachment_url(value: dict) -> str | None:
     return None
 
 
-def plan(input_parquet: Path, output_root: Path, *, source_run_id: str, source_snapshot_sha256: str) -> dict:
+def plan(input_parquet: Path, output_root: Path, *, source_run_id: str, source_snapshot_sha256: str, base_url: str = "https://tenders.go.ke") -> dict:
     """Create one job per unique attachment URL and retain every record reference."""
     output_root.mkdir(parents=True, exist_ok=True)
     (output_root / "files").mkdir(exist_ok=True)
@@ -68,7 +68,7 @@ def plan(input_parquet: Path, output_root: Path, *, source_run_id: str, source_s
             if not raw_url:
                 continue
             try:
-                url = normalize_url(raw_url)
+                url = normalize_url(raw_url, base_url)
             except ValueError:
                 continue
             item = rows.setdefault(url, {"ocids": [], "release_ids": [], "document_ids": []})
@@ -103,17 +103,22 @@ def _valid_content_type(content_type: str, url: str, payload: bytes) -> bool:
     return bool(payload)
 
 
-def run(run_root: Path, *, timeout: int = 60, max_attempts: int = 4, sleep: Callable[[float], None] = time.sleep, randomizer: Callable[[], float] = random.random) -> dict:
+def run(run_root: Path, *, timeout: int = 60, max_attempts: int = 4, rate_per_second: float = 1.0, jitter_seconds: float = 1.0, sleep: Callable[[float], None] = time.sleep, randomizer: Callable[[], float] = random.random) -> dict:
     ledger_path = run_root / "ledger.duckdb"
     connection = duckdb.connect(str(ledger_path))
     _create_ledger(connection)
     (run_root / "files").mkdir(exist_ok=True)
+    next_request_at = 0.0
     while True:
         job = connection.execute("SELECT job_id, normalized_url, status, attempts FROM download_jobs WHERE status IN ('pending', 'retryable_failed') ORDER BY job_id LIMIT 1").fetchone()
         if job is None:
             break
         job_id, url, _, attempts = job
         attempt = attempts + 1
+        delay = max(0.0, next_request_at - time.monotonic()) + randomizer() * jitter_seconds
+        if delay:
+            sleep(delay)
+        next_request_at = max(next_request_at, time.monotonic()) + (1.0 / rate_per_second)
         connection.execute("UPDATE download_jobs SET status = 'running', attempts = ?, updated_at = ? WHERE job_id = ?", [attempt, utc_now(), job_id])
         try:
             status, headers, payload = _fetch(url, timeout)

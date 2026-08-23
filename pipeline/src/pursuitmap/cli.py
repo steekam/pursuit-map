@@ -93,9 +93,11 @@ def main() -> None:
     documents_plan.add_argument("--output-root", type=Path, required=True)
     documents_plan.add_argument("--source-run-id", required=True)
     documents_plan.add_argument("--source-snapshot-sha256", required=True)
+    documents_plan.add_argument("--base-url", default="https://tenders.go.ke")
     documents_run = documents_subparsers.add_parser("run")
     documents_run.add_argument("--run-root", type=Path, required=True)
     documents_run.add_argument("--timeout", type=int, default=60)
+    documents_run.add_argument("--rate", type=float, default=1.0)
 
     args = parser.parse_args()
     if args.command == "ingest":
@@ -125,9 +127,9 @@ def main() -> None:
         result = verify_outputs(args.country)
     elif args.command == "documents":
         if args.documents_action == "plan":
-            result = document_plan(args.input_parquet, args.output_root, source_run_id=args.source_run_id, source_snapshot_sha256=args.source_snapshot_sha256)
+            result = document_plan(args.input_parquet, args.output_root, source_run_id=args.source_run_id, source_snapshot_sha256=args.source_snapshot_sha256, base_url=args.base_url)
         else:
-            result = document_run(args.run_root, timeout=args.timeout)
+            result = document_run(args.run_root, timeout=args.timeout, rate_per_second=args.rate)
     else:
         result = search(args.query, vertical=args.vertical, limit=args.limit, taxonomy_path=args.taxonomy_path, as_of=args.as_of)
     print(json.dumps(result, indent=2, default=str))
