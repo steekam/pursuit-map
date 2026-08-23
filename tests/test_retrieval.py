@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from pursuitmap.retrieval import load_taxonomy, score_record, score_records
+from pursuitmap.retrieval import available_verticals, load_taxonomy, score_record, score_records
+
+
+def test_experimental_vertical_taxonomies_are_available():
+    assert available_verticals() == ["construction", "healthcare", "ict"]
 
 
 def test_positive_ict_record_scores_networking_and_exposes_breakdown():

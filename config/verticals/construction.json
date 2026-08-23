@@ -1,0 +1,60 @@
+{
+  "version": "construction/2026-08-23",
+  "field_weights": {
+    "title": 4.0,
+    "description": 2.5,
+    "summary": 2.0,
+    "items": 1.5,
+    "documents": 1.0,
+    "classification": 2.0,
+    "buyer.name": 0.75,
+    "supplier.name": 0.75,
+    "notes": 0.5
+  },
+  "global_exclusions": ["stationery", "catering", "fuel", "uniforms", "software", "cybersecurity"],
+  "blocked_categories": [],
+  "categories": [
+    {
+      "id": "construction",
+      "label": "Construction",
+      "include_terms": [
+        {"term": "construction", "weight": 2.5},
+        {"term": "building works", "weight": 2.5},
+        {"term": "building construction", "weight": 2.5},
+        {"term": "renovation", "weight": 2.0},
+        {"term": "refurbishment", "weight": 2.0},
+        {"term": "infrastructure works", "weight": 2.0},
+        {"term": "contractor", "weight": 1.5}
+      ],
+      "exclude_terms": ["stationery", "software", "catering"]
+    },
+    {
+      "id": "civil_engineering",
+      "label": "Civil Engineering",
+      "include_terms": [
+        {"term": "civil works", "weight": 2.5},
+        {"term": "road construction", "weight": 2.5},
+        {"term": "road rehabilitation", "weight": 2.5},
+        {"term": "bridge", "weight": 1.5},
+        {"term": "water infrastructure", "weight": 2.0},
+        {"term": "stormwater", "weight": 1.5},
+        {"term": "earthworks", "weight": 1.5}
+      ],
+      "exclude_terms": ["software", "stationery", "catering"]
+    },
+    {
+      "id": "facilities",
+      "label": "Facilities and Maintenance",
+      "include_terms": [
+        {"term": "facilities management", "weight": 2.5},
+        {"term": "building maintenance", "weight": 2.5},
+        {"term": "maintenance works", "weight": 2.0},
+        {"term": "electrical installation", "weight": 2.0},
+        {"term": "plumbing", "weight": 1.5},
+        {"term": "hvac", "weight": 2.0},
+        {"term": "property maintenance", "weight": 2.0}
+      ],
+      "exclude_terms": ["software", "stationery", "catering"]
+    }
+  ]
+}

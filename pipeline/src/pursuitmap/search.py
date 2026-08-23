@@ -10,7 +10,7 @@ import duckdb
 
 from .paths import RAW_ROOT, WORKING_ROOT, canonical_root
 from .provenance import source_hash, write_run_manifest
-from .retrieval import score_record
+from .retrieval import score_record, taxonomy_path as vertical_taxonomy_path
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -67,9 +67,10 @@ def _records(parquet_root: Path | None = None) -> list[dict[str, Any]]:
     return records
 
 
-def search(query: str, *, limit: int = 20, taxonomy_path: str | Path | None = None, as_of: str | None = None) -> dict[str, Any]:
+def search(query: str, *, vertical: str = "ict", limit: int = 20, taxonomy_path: str | Path | None = None, as_of: str | None = None) -> dict[str, Any]:
     source_sha = source_hash(RAW_ROOT / "ocds_full.jsonl.gz", RAW_ROOT / "manifest.json")
     parquet_root = canonical_root()
+    resolved_taxonomy_path = Path(taxonomy_path) if taxonomy_path else vertical_taxonomy_path(vertical)
     if as_of:
         as_of_manifest = WORKING_ROOT / "runs" / as_of / "run_manifest.json"
         if not as_of_manifest.exists():
@@ -92,7 +93,7 @@ def search(query: str, *, limit: int = 20, taxonomy_path: str | Path | None = No
         query_matches = [term for term in query_tokens if any(term in _tokens(value) for value in text_fields.values())]
         if query_tokens and not query_matches:
             continue
-        scored = score_record(record, taxonomy_path=taxonomy_path)
+        scored = score_record(record, taxonomy_path=resolved_taxonomy_path)
         if scored["decision"] != "include":
             continue
         query_breakdown = []
@@ -117,5 +118,5 @@ def search(query: str, *, limit: int = 20, taxonomy_path: str | Path | None = No
         candidates.append(result)
     candidates.sort(key=lambda item: (-item["score"], str(item["metadata"].get("ocid") or ""), str(item["metadata"].get("release_id") or "")))
     candidates = candidates[:limit]
-    run, run_manifest_path = write_run_manifest("search", source_sha, {"query": query, "limit": limit, "result_count": len(candidates), "taxonomy_path": str(taxonomy_path) if taxonomy_path else "default"})
-    return {"run_id": run, "run_manifest": str(run_manifest_path), "as_of": as_of, "source_snapshot_sha256": source_sha, "query": query, "limit": limit, "result_count": len(candidates), "results": candidates}
+    run, run_manifest_path = write_run_manifest("search", source_sha, {"query": query, "vertical": vertical, "limit": limit, "result_count": len(candidates), "taxonomy_path": str(resolved_taxonomy_path)})
+    return {"run_id": run, "run_manifest": str(run_manifest_path), "as_of": as_of, "source_snapshot_sha256": source_sha, "query": query, "vertical": vertical, "limit": limit, "result_count": len(candidates), "results": candidates}

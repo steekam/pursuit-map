@@ -1,0 +1,60 @@
+{
+  "version": "healthcare/2026-08-23",
+  "field_weights": {
+    "title": 4.0,
+    "description": 2.5,
+    "summary": 2.0,
+    "items": 1.5,
+    "documents": 1.0,
+    "classification": 2.0,
+    "buyer.name": 0.75,
+    "supplier.name": 0.75,
+    "notes": 0.5
+  },
+  "global_exclusions": ["stationery", "furniture", "cleaning", "catering", "fuel", "construction", "uniforms"],
+  "blocked_categories": [],
+  "categories": [
+    {
+      "id": "healthcare",
+      "label": "Healthcare Services",
+      "include_terms": [
+        {"term": "healthcare", "weight": 2.5},
+        {"term": "health care", "weight": 2.5},
+        {"term": "clinical services", "weight": 2.5},
+        {"term": "hospital services", "weight": 2.0},
+        {"term": "patient care", "weight": 2.0},
+        {"term": "ambulance", "weight": 2.0},
+        {"term": "laboratory services", "weight": 2.0}
+      ],
+      "exclude_terms": ["stationery", "construction", "catering"]
+    },
+    {
+      "id": "medical_equipment",
+      "label": "Medical Equipment",
+      "include_terms": [
+        {"term": "medical equipment", "weight": 2.5},
+        {"term": "medical supplies", "weight": 2.5},
+        {"term": "surgical", "weight": 1.5},
+        {"term": "diagnostic", "weight": 1.5},
+        {"term": "ultrasound", "weight": 2.0},
+        {"term": "radiology", "weight": 2.0},
+        {"term": "ventilator", "weight": 2.0}
+      ],
+      "exclude_terms": ["stationery", "construction", "furniture"]
+    },
+    {
+      "id": "pharmaceuticals",
+      "label": "Pharmaceuticals",
+      "include_terms": [
+        {"term": "pharmaceutical", "weight": 2.5},
+        {"term": "medicine", "weight": 2.0},
+        {"term": "medicines", "weight": 2.0},
+        {"term": "vaccines", "weight": 2.5},
+        {"term": "drugs", "weight": 1.5},
+        {"term": "clinical consumables", "weight": 2.0},
+        {"term": "dispensing", "weight": 1.5}
+      ],
+      "exclude_terms": ["stationery", "construction", "fuel"]
+    }
+  ]
+}

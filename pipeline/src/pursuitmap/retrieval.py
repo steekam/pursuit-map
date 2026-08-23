@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_TAXONOMY_PATH = Path(__file__).resolve().parents[3] / "config" / "verticals" / "ict.json"
+VERTICALS_ROOT = Path(__file__).resolve().parents[3] / "config" / "verticals"
+DEFAULT_TAXONOMY_PATH = VERTICALS_ROOT / "ict.json"
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -24,6 +25,16 @@ def load_taxonomy(path: str | Path | None = None) -> dict[str, Any]:
     if not isinstance(payload.get("field_weights"), dict) or not payload["field_weights"]:
         raise ValueError("Taxonomy field_weights are required")
     return payload
+
+
+def available_verticals() -> list[str]:
+    return sorted(path.stem for path in VERTICALS_ROOT.glob("*.json"))
+
+
+def taxonomy_path(vertical: str) -> Path:
+    if vertical not in available_verticals():
+        raise ValueError(f"Unknown vertical: {vertical}")
+    return VERTICALS_ROOT / f"{vertical}.json"
 
 
 def _text_parts(value: object) -> list[str]:
