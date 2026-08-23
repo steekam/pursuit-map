@@ -7,7 +7,7 @@
     "/api/closed-tenders"
   ],
   "detail_endpoint": "/api/tender/{id}",
-  "per_page": 100,
+  "per_page": 5000,
   "request_timeout_seconds": 30,
   "concurrency": 1,
   "refill_rate_per_second": 1.0,

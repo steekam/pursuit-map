@@ -46,6 +46,12 @@ capture active/closed list response
 
 The same captured list and detail responses produce identical enrichment output. Live portal runs remain time-varying and must retain retrieval timestamps, status codes, response hashes, and failed-request records.
 
+## Pagination capability audit
+
+The captured HAR shows list parameters for search, page size, ordering, tender reference, title, buyer, procurement method, procurement category, close date, publication date, and addenda. A live read-only probe confirmed that `perpage=5000` is accepted. The closed list reports 142,900 records over 29 pages at that size; the active list reports 303 records on one page. Exact `published_at` and `close_at` filters also work. Comma-separated date ranges returned zero records and remain unsupported.
+
+New Kenya enrichment runs use `perpage=5000`. Existing runs retain their original page size and remain resumable.
+
 HAR artifacts:
 
 - `data/enriched/kenya/ppip-portal.har`
