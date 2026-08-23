@@ -477,7 +477,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     consecutive_429 = 0
     detail_batches = 0
     while True:
-        job = connection.execute("SELECT * FROM request_jobs WHERE run_id = ? AND status IN ('pending','retryable_failed') AND next_attempt_at <= ? ORDER BY job_type, created_at, job_id LIMIT 1", [run, _now()]).fetchone()
+        job = connection.execute("SELECT * FROM request_jobs WHERE run_id = ? AND status IN ('pending','retryable_failed') AND next_attempt_at <= ? ORDER BY CASE WHEN job_type = 'list' THEN 0 ELSE 1 END, created_at, job_id LIMIT 1", [run, _now()]).fetchone()
         if job is None:
             next_ready = connection.execute("SELECT min(next_attempt_at) FROM request_jobs WHERE run_id = ? AND status IN ('pending','retryable_failed')", [run]).fetchone()[0]
             if next_ready is None:

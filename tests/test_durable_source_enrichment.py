@@ -39,11 +39,18 @@ def test_plan_run_materialize_with_fake_ppip(monkeypatch, tmp_path):
     (roots.working / "normalization_manifest.json").write_text(json.dumps({"parquet_root": str(canonical)}), encoding="utf-8")
 
     planned = engine.plan("ke", limit=25)
-    list_payload = json.dumps({"data": [{"id": 123, "ocid": "ocds-5whusi-123-ABC", "tender_ref": "ABC"}, {"id": 999, "ocid": "ocds-5whusi-999-NO", "tender_ref": "NO"}], "current_page": 1, "last_page": 1}).encode()
+    list_payload = json.dumps({"data": [{"id": 123, "ocid": "ocds-5whusi-123-ABC", "tender_ref": "ABC"}, {"id": 999, "ocid": "ocds-5whusi-999-NO", "tender_ref": "NO"}], "current_page": 1, "last_page": 2, "next_page_url": "https://example.test/page/2"}).encode()
+    list_payload_page_2 = json.dumps({"data": [{"id": 123, "ocid": "ocds-5whusi-123-ABC", "tender_ref": "ABC"}, {"id": 999, "ocid": "ocds-5whusi-999-NO", "tender_ref": "NO"}], "current_page": 2, "last_page": 2}).encode()
     detail_payload = json.dumps({"ocid": "ocds-5whusi-123-ABC", "tender_ref": "ABC", "title": "Network", "pe": {"id": 1, "name": "Buyer", "pin": "P1"}, "procurement_method": {"title": "Open", "code": "open"}, "procurement_category": {"title": "Goods", "code": "goods"}, "financial_year": {"name": "2025/2026"}, "documents": []}).encode()
 
+    call_kinds = []
+
     def fake_fetch(url, params, timeout):
-        return (200, {"Content-Type": "application/json"}, list_payload if "/api/active-tenders" in url or "/api/closed-tenders" in url else detail_payload)
+        if "/api/active-tenders" in url or "/api/closed-tenders" in url:
+            call_kinds.append("list")
+            return (200, {"Content-Type": "application/json"}, list_payload if params["page"] == 1 else list_payload_page_2)
+        call_kinds.append("detail")
+        return (200, {"Content-Type": "application/json"}, detail_payload)
 
     monkeypatch.setattr(engine, "_fetch", fake_fetch)
     result = engine.execute(planned["run_id"], country="ke", sleep=lambda _: None, randomizer=lambda: 0.0, workers=2)
@@ -52,6 +59,7 @@ def test_plan_run_materialize_with_fake_ppip(monkeypatch, tmp_path):
     assert result["detail_match_rate"] == 1.0
     assert result["job_counts"]["permanent_failed"] == 0
     assert (roots.enriched / planned["run_id"] / "source_enrichment.parquet").exists()
+    assert call_kinds.index("detail") > max(index for index, kind in enumerate(call_kinds) if kind == "list")
     progress = engine.status(planned["run_id"], country="ke")
     assert progress["phase"] == "complete"
     assert progress["accepted_detail_rows"] == 1
