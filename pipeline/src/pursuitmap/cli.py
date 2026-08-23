@@ -72,6 +72,8 @@ def main() -> None:
     durable_benchmark.add_argument("country", choices=["ke"])
     durable_benchmark.add_argument("--run-id", required=True)
     durable_benchmark.add_argument("--sample-per-level", type=int, default=20)
+    durable_benchmark.add_argument("--rates", type=float, nargs="+", default=[2.0, 3.0])
+    durable_benchmark.add_argument("--workers", type=int, nargs="+", default=[2, 3])
 
     materialize_parser = commands.add_parser("materialize")
     materialize_parser.add_argument("country", choices=["za"])
@@ -127,7 +129,9 @@ def main() -> None:
         elif args.source_enrich_action == "resume":
             result = source_enrich_resume(args.run_id, country=args.country)
         elif args.source_enrich_action == "benchmark":
-            result = source_enrich_benchmark(args.run_id, country=args.country, sample_per_level=args.sample_per_level)
+            if len(args.rates) != len(args.workers):
+                parser.error("--rates and --workers must have the same length")
+            result = source_enrich_benchmark(args.run_id, country=args.country, sample_per_level=args.sample_per_level, rates=tuple(args.rates), concurrency=tuple(args.workers))
         else:
             result = source_enrich_report(args.run_id, country=args.country)
     elif args.command in {"report", "profile"}:
