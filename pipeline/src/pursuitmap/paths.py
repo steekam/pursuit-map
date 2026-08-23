@@ -1,28 +1,58 @@
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DATA_ROOT = PROJECT_ROOT / "data"
-RAW_ROOT = DATA_ROOT / "raw" / "south_africa"
-WORKING_ROOT = DATA_ROOT / "working" / "south_africa"
-PARQUET_ROOT = DATA_ROOT / "parquet" / "south_africa"
-MATERIALIZED_ROOT = DATA_ROOT / "materialized" / "south_africa"
 
 
-def ensure_data_dirs() -> None:
-    for path in (RAW_ROOT, WORKING_ROOT, PARQUET_ROOT, MATERIALIZED_ROOT):
+@dataclass(frozen=True)
+class CountryPaths:
+    raw: Path
+    working: Path
+    parquet: Path
+    materialized: Path
+
+
+COUNTRY_SLUGS = {"za": "south_africa", "ke": "kenya"}
+
+
+def country_paths(country: str = "za") -> CountryPaths:
+    try:
+        slug = COUNTRY_SLUGS[country]
+    except KeyError as error:
+        raise ValueError(f"Unknown country: {country}") from error
+    return CountryPaths(
+        raw=DATA_ROOT / "raw" / slug,
+        working=DATA_ROOT / "working" / slug,
+        parquet=DATA_ROOT / "parquet" / slug,
+        materialized=DATA_ROOT / "materialized" / slug,
+    )
+
+
+_ZA_PATHS = country_paths()
+RAW_ROOT = _ZA_PATHS.raw
+WORKING_ROOT = _ZA_PATHS.working
+PARQUET_ROOT = _ZA_PATHS.parquet
+MATERIALIZED_ROOT = _ZA_PATHS.materialized
+
+
+def ensure_data_dirs(country: str = "za") -> None:
+    roots = country_paths(country)
+    for path in (roots.raw, roots.working, roots.parquet, roots.materialized):
         path.mkdir(parents=True, exist_ok=True)
 
 
-def canonical_root(run_id: str | None = None) -> Path:
+def canonical_root(country: str = "za", run_id: str | None = None) -> Path:
     """Resolve an immutable canonical snapshot, defaulting to the latest run."""
+    roots = country_paths(country)
     if run_id:
-        root = PARQUET_ROOT / run_id
+        root = roots.parquet / run_id
     else:
-        manifest_path = WORKING_ROOT / "normalization_manifest.json"
+        manifest_path = roots.working / "normalization_manifest.json"
         if not manifest_path.exists():
-            raise FileNotFoundError("Run `pursuitmap normalize za` before reading canonical tables.")
+            raise FileNotFoundError(f"Run `pursuitmap normalize {country}` before reading canonical tables.")
         root = Path(json.loads(manifest_path.read_text(encoding="utf-8"))["parquet_root"])
     if not root.is_dir():
         raise FileNotFoundError(f"Canonical output directory not found: {root}")

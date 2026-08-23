@@ -79,7 +79,7 @@ def search(query: str, *, vertical: str = "ict", limit: int = 20, taxonomy_path:
         if as_of_payload.get("source_snapshot_sha256") != source_sha:
             raise ValueError("The requested run uses a different source snapshot than the current canonical tables")
         if as_of_payload.get("operation") == "normalize":
-            parquet_root = canonical_root(as_of)
+            parquet_root = canonical_root(run_id=as_of)
     query_tokens = _tokens(query)
     candidates = []
     for record in _records(parquet_root):

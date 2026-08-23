@@ -8,8 +8,8 @@ from .normalize import TABLE_COLUMNS
 from .paths import canonical_root
 
 
-def verify_outputs(parquet_root=None) -> dict:
-    parquet_root = parquet_root or canonical_root()
+def verify_outputs(country: str = "za", parquet_root=None) -> dict:
+    parquet_root = parquet_root or canonical_root(country)
     connection = duckdb.connect()
     checks: list[dict] = []
 

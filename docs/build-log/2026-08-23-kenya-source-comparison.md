@@ -6,7 +6,7 @@ The Kenya PPRA/PPIP OCDS export can extend PursuitMap's country coverage. Its ra
 
 ## Work
 
-Pulled the OCP Data Registry all-time Kenya JSONL gzip snapshot. Recorded its URL, retrieval time, size, and SHA-256 hash in the ignored raw-data manifest. Profiled release, lifecycle, planning, item, document, timing, value, and identity fields.
+Pulled the OCP Data Registry all-time Kenya JSONL gzip snapshot. Recorded its URL, retrieval time, size, and SHA-256 hash in the ignored raw-data manifest. Profiled release, lifecycle, planning, item, document, timing, value, and identity fields. Added country-aware source paths and the shared raw quality report command.
 
 ## Measurement
 
@@ -18,11 +18,11 @@ South Africa has 37,894 releases, 37,894 tenders, 11,187 awards, 1,653 contracts
 
 Kenya has greater tender, award, and contract volume. South Africa has richer planning and document metadata. Kenya's export reports one contract row for every award row. The registry reports an invalid supplier identifier scheme, no buyer identifier scheme, extreme value outliers, and missing party names.
 
-The raw profile found no missing buyer IDs or names and no supplier IDs equal to `0`. These counts do not prove that the identifiers are valid or stable.
+The raw profile found no missing buyer IDs or names and no supplier IDs equal to `0`. It flags 359 tender starts and 254 tender ends as missing or outliers after a 2000–2100 plausibility rule. These counts do not prove that the identifiers are valid or stable.
 
 ## Decision
 
-Keep Kenya as a separate comparison track. Build a country-specific adapter after the raw profile. Compare canonical coverage and warnings with the existing South Africa quality report.
+Keep Kenya as a separate comparison track. Use the raw shared report for source comparison. Build a streaming country-specific canonical adapter before comparing canonical coverage and relationship warnings with South Africa.
 
 ## Next
 

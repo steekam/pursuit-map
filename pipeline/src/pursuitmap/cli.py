@@ -19,20 +19,20 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
 
     ingest_parser = commands.add_parser("ingest")
-    ingest_parser.add_argument("country", choices=["za"])
+    ingest_parser.add_argument("country", choices=["za", "ke"])
     ingest_parser.add_argument("--url")
     ingest_parser.add_argument("--local-path", type=Path)
     ingest_parser.add_argument("--force", action="store_true")
 
     normalize_parser = commands.add_parser("normalize")
-    normalize_parser.add_argument("country", choices=["za"])
+    normalize_parser.add_argument("country", choices=["za", "ke"])
     normalize_parser.add_argument("--source-path", type=Path)
 
     report_parser = commands.add_parser("report")
-    report_parser.add_argument("country", choices=["za"])
+    report_parser.add_argument("country", choices=["za", "ke"])
 
     profile_parser = commands.add_parser("profile")
-    profile_parser.add_argument("country", choices=["za"])
+    profile_parser.add_argument("country", choices=["za", "ke"])
 
     materialize_parser = commands.add_parser("materialize")
     materialize_parser.add_argument("country", choices=["za"])
@@ -51,21 +51,21 @@ def main() -> None:
     evaluation_parser.add_argument("--vertical", dest="verticals", choices=available_verticals(), nargs="+", default=available_verticals())
 
     verify_parser = commands.add_parser("verify")
-    verify_parser.add_argument("country", choices=["za"])
+    verify_parser.add_argument("country", choices=["za", "ke"])
 
     args = parser.parse_args()
     if args.command == "ingest":
-        result = ingest(args.url or None, force=args.force, local_path=args.local_path) if args.url else ingest(force=args.force, local_path=args.local_path)
+        result = ingest(args.url or None, country=args.country, force=args.force, local_path=args.local_path)
     elif args.command == "normalize":
-        result = normalize(args.source_path)
+        result = normalize(args.source_path, country=args.country)
     elif args.command in {"report", "profile"}:
-        result = create_report()
+        result = create_report(args.country)
     elif args.command == "materialize":
         result = materialize()
     elif args.command == "evaluate":
         result = evaluate_baselines(args.verticals)
     elif args.command == "verify":
-        result = verify_outputs()
+        result = verify_outputs(args.country)
     else:
         result = search(args.query, vertical=args.vertical, limit=args.limit, taxonomy_path=args.taxonomy_path, as_of=args.as_of)
     print(json.dumps(result, indent=2, default=str))

@@ -3,6 +3,7 @@ import json
 
 from pursuitmap import paths
 from pursuitmap.normalize import build_rows, iter_releases, normalize_name, number
+from pursuitmap.raw_profile import profile_raw
 
 
 def test_normalize_name_collapses_case_and_whitespace():
@@ -63,14 +64,25 @@ def test_iter_releases_accepts_jsonl_and_release_packages(tmp_path):
 
 
 def test_canonical_root_resolves_latest_run_from_manifest(tmp_path, monkeypatch):
-    parquet_root = tmp_path / "parquet"
-    working_root = tmp_path / "working"
+    data_root = tmp_path / "data"
+    parquet_root = data_root / "parquet" / "south_africa"
+    working_root = data_root / "working" / "south_africa"
     run_root = parquet_root / "normalize-test"
     run_root.mkdir(parents=True)
-    working_root.mkdir()
+    working_root.mkdir(parents=True)
     (working_root / "normalization_manifest.json").write_text(json.dumps({"parquet_root": str(run_root)}), encoding="utf-8")
-    monkeypatch.setattr(paths, "PARQUET_ROOT", parquet_root)
-    monkeypatch.setattr(paths, "WORKING_ROOT", working_root)
+    monkeypatch.setattr(paths, "DATA_ROOT", data_root)
 
     assert paths.canonical_root() == run_root
-    assert paths.canonical_root("normalize-test") == run_root
+    assert paths.canonical_root(run_id="normalize-test") == run_root
+
+
+def test_raw_profile_flags_outlier_tender_dates(tmp_path):
+    path = tmp_path / "kenya.jsonl"
+    path.write_text(json.dumps({"ocid": "ocds-test", "id": "r1", "date": "2024-01-01T00:00:00Z", "buyer": {"id": "b1", "name": "Buyer"}, "tender": {"tenderPeriod": {"startDate": "0001-03-17T21:33:00Z", "endDate": "2025-01-01T00:00:00Z"}}}) + "\n", encoding="utf-8")
+
+    report = profile_raw(path)
+
+    assert report["missingness_null_or_blank_counts"]["source_fields"]["tender_period_start"] == 1
+    assert report["missingness_null_or_blank_counts"]["source_fields"]["tender_period_end"] == 0
+    assert report["stage_date_ranges"]["tenders"]["min"] is None

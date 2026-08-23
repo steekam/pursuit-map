@@ -6,8 +6,9 @@ from pathlib import Path
 
 import duckdb
 
-from .paths import RAW_ROOT, WORKING_ROOT, canonical_root, ensure_data_dirs
+from .paths import canonical_root, country_paths, ensure_data_dirs
 from .provenance import source_hash, utc_now, write_run_manifest
+from .raw_profile import profile_raw
 from .verification import verify_outputs
 
 
@@ -15,9 +16,12 @@ def _scalar(connection: duckdb.DuckDBPyConnection, query: str):
     return connection.execute(query).fetchone()[0]
 
 
-def create_report() -> dict:
-    ensure_data_dirs()
-    parquet_root = canonical_root()
+def create_report(country: str = "za") -> dict:
+    ensure_data_dirs(country)
+    roots = country_paths(country)
+    if not (roots.working / "normalization_manifest.json").exists():
+        return create_raw_report(country)
+    parquet_root = canonical_root(country)
     connection = duckdb.connect()
     tables = {
         "releases": "releases",
@@ -130,8 +134,10 @@ def create_report() -> dict:
             GROUP BY 1, 2 ORDER BY award_count DESC, supplier_name LIMIT 10
         """).fetchall()
     ]
-    source_sha = source_hash(RAW_ROOT / "ocds_full.jsonl.gz", RAW_ROOT / "manifest.json")
+    source_sha = source_hash(roots.raw / "ocds_full.jsonl.gz", roots.raw / "manifest.json")
     report = {
+        "country": country,
+        "profile_mode": "canonical_parquet",
         "generated_at": utc_now(),
         "source_snapshot_sha256": source_sha,
         "counts": counts,
@@ -143,7 +149,7 @@ def create_report() -> dict:
         "top_buyers_by_tender_count": top_buyers,
         "top_suppliers_by_award_count": top_suppliers,
         "anomalies": anomalies,
-        "verification": verify_outputs(),
+        "verification": verify_outputs(country, parquet_root),
         "measured_from": "normalized Parquet tables",
         "assumptions": [
             "A compiled OCDS line is treated as one source release when it has no nested releases array.",
@@ -156,21 +162,56 @@ def create_report() -> dict:
             "This first report does not infer procurement need, seller fit, or causal relationships.",
         ],
     }
-    run, run_manifest_path = write_run_manifest("profile", source_sha, {"report": report, "parquet_root": str(parquet_root)})
+    run, run_manifest_path = write_run_manifest("profile", source_sha, {"country": country, "report": report, "parquet_root": str(parquet_root)}, working_root=roots.working)
     report["run_id"] = run
     report["run_manifest"] = str(run_manifest_path)
-    versioned_json = WORKING_ROOT / "runs" / run / "data_quality_report.json"
-    versioned_markdown = WORKING_ROOT / "runs" / run / "data_quality_report.md"
+    versioned_json = roots.working / "runs" / run / "data_quality_report.json"
+    versioned_markdown = roots.working / "runs" / run / "data_quality_report.md"
     report["outputs"] = {"json": str(versioned_json), "markdown": str(versioned_markdown)}
     versioned_json.write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
     versioned_markdown.write_text(render_markdown(report), encoding="utf-8")
-    (WORKING_ROOT / "data_quality_report.json").write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
-    (WORKING_ROOT / "data_quality_report.md").write_text(render_markdown(report), encoding="utf-8")
+    (roots.working / "data_quality_report.json").write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
+    (roots.working / "data_quality_report.md").write_text(render_markdown(report), encoding="utf-8")
     connection.close()
     return report
 
 
+def create_raw_report(country: str) -> dict:
+    roots = country_paths(country)
+    source_path = roots.raw / "ocds_full.jsonl.gz"
+    if not source_path.exists():
+        raise FileNotFoundError(f"Source not found: {source_path}. Run `pursuitmap ingest {country}` first.")
+    source_sha = source_hash(source_path, roots.raw / "manifest.json")
+    report = {
+        "country": country,
+        "generated_at": utc_now(),
+        "source_snapshot_sha256": source_sha,
+        "profile_mode": "raw_source",
+        **profile_raw(source_path),
+    }
+    run, run_manifest_path = write_run_manifest("profile", source_sha, {"country": country, "profile_mode": "raw_source", "report": report}, working_root=roots.working)
+    report["run_id"] = run
+    report["run_manifest"] = str(run_manifest_path)
+    versioned_json = roots.working / "runs" / run / "data_quality_report.json"
+    versioned_markdown = roots.working / "runs" / run / "data_quality_report.md"
+    report["outputs"] = {"json": str(versioned_json), "markdown": str(versioned_markdown)}
+    versioned_json.write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
+    versioned_markdown.write_text(render_markdown(report), encoding="utf-8")
+    (roots.working / "data_quality_report.json").write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
+    (roots.working / "data_quality_report.md").write_text(render_markdown(report), encoding="utf-8")
+    return report
+
+
 def render_markdown(report: dict) -> str:
+    def display(value: object) -> str:
+        if value is None:
+            return "—"
+        if isinstance(value, (int, float)):
+            return f"{value:,}"
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, sort_keys=True)
+        return str(value)
+
     lines = [
         "# South Africa OCDS — initial data-quality report",
         "",
@@ -196,9 +237,9 @@ def render_markdown(report: dict) -> str:
     for table, values in report["missingness_null_or_blank_counts"].items():
         lines.append(f"- `{table}`: " + ", ".join(f"{column}={count:,}" for column, count in values.items()))
     lines.extend(["", "## Anomalies", ""])
-    lines.extend(f"- `{name}`: {value:,}" for name, value in report["anomalies"].items())
+    lines.extend(f"- `{name}`: {display(value)}" for name, value in report["anomalies"].items())
     lines.extend(["", "## Category and document coverage", ""])
-    lines.extend(f"- `{name}`: {value:,}" for name, value in report["category_and_document_coverage"].items())
+    lines.extend(f"- `{name}`: {display(value)}" for name, value in report["category_and_document_coverage"].items())
     lines.extend(["", "## Top source categories", "", "| Category | Tenders |", "| --- | ---: |"])
     lines.extend(f"| {row['category']} | {row['tender_count']:,} |" for row in report["top_tender_categories"])
     lines.extend(["", "## Top buyers by tender rows", "", "| Buyer | Tenders |", "| --- | ---: |"])

@@ -13,6 +13,10 @@ uv run pursuitmap normalize za
 uv run pursuitmap profile za
 uv run pursuitmap materialize za
 uv run pursuitmap search za --query "network modernization" --vertical ict --limit 20 --format json
+
+# Kenya source profile
+uv run pursuitmap ingest ke
+uv run pursuitmap profile ke
 ```
 
 The project environment is `.venv/` at the repository root. `uv.lock` records the dependency resolution. Run commands with `uv run`.
@@ -29,6 +33,8 @@ tests/          Cross-project and pipeline tests
 ```
 
 The raw artifact is stored under `data/raw/` with a SHA-256 manifest. Each normalization run writes canonical Parquet under `data/parquet/south_africa/<normalize-run-id>/`. The matching DuckDB file is under the run directory. Reports, marts, and manifests use versioned run directories. Compatibility files point to the latest result. Git ignores generated data. `data/working/south_africa/normalization_manifest.json` selects the latest canonical run.
+
+`pursuitmap profile ke` currently profiles the raw Kenya snapshot. Kenya canonical normalization waits for a streaming performance pass.
 
 Cross-session operating rules live in [`AGENTS.md`](AGENTS.md). The machine-readable pipeline contract is [`config/pipeline-contract.json`](config/pipeline-contract.json); tests enforce its required layers, operations, determinism, and boundaries.
 

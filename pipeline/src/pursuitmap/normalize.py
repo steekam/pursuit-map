@@ -8,7 +8,7 @@ from pathlib import Path
 
 import duckdb
 
-from .paths import PARQUET_ROOT, RAW_ROOT, WORKING_ROOT, ensure_data_dirs
+from .paths import country_paths, ensure_data_dirs
 from .provenance import parquet_checksums, run_id, source_hash, utc_now, write_run_manifest
 
 
@@ -187,11 +187,12 @@ def _identity_audit(rows: dict[str, list[tuple]]) -> list[tuple]:
     return [(entity_type, source_id, sorted(data["names"], key=lambda value: "" if value is None else str(value))[0] if data["names"] else None, normalized, data["status"], len(data["names"]), len(data["ids"]), data["count"]) for (entity_type, source_id, normalized), data in observations.items()]
 
 
-def normalize(source_path: Path | None = None) -> dict:
-    ensure_data_dirs()
-    source_path = source_path or next((path for path in (RAW_ROOT / "ocds_full.jsonl.gz", RAW_ROOT / "ocds_full.jsonl") if path.exists()), RAW_ROOT / "ocds_full.jsonl.gz")
+def normalize(source_path: Path | None = None, *, country: str = "za") -> dict:
+    ensure_data_dirs(country)
+    roots = country_paths(country)
+    source_path = source_path or next((path for path in (roots.raw / "ocds_full.jsonl.gz", roots.raw / "ocds_full.jsonl") if path.exists()), roots.raw / "ocds_full.jsonl.gz")
     if not source_path.exists():
-        raise FileNotFoundError(f"Source not found: {source_path}. Run `pursuitmap ingest za` first.")
+        raise FileNotFoundError(f"Source not found: {source_path}. Run `pursuitmap ingest {country}` first.")
     source_sha = source_hash(source_path, source_path.parent / "manifest.json")
     rows = {name: [] for name in TABLE_COLUMNS}
     release_count = 0
@@ -207,9 +208,9 @@ def normalize(source_path: Path | None = None) -> dict:
         rows[table] = [(source_sha, *row) for row in rows[table]]
 
     run = run_id(source_sha, "normalize")
-    parquet_root = PARQUET_ROOT / run
+    parquet_root = roots.parquet / run
     parquet_root.mkdir(parents=True, exist_ok=False)
-    database_path = WORKING_ROOT / "runs" / run / "south_africa.duckdb"
+    database_path = roots.working / "runs" / run / f"{country}.duckdb"
     database_path.parent.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect(str(database_path))
     for table, columns in TABLE_COLUMNS.items():
@@ -232,8 +233,8 @@ def normalize(source_path: Path | None = None) -> dict:
         "parquet_root": str(parquet_root),
         "parquet_sha256": parquet_checksums(parquet_root),
     }
-    run, run_manifest_path = write_run_manifest("normalize", source_sha, manifest, run=run)
+    run, run_manifest_path = write_run_manifest("normalize", source_sha, manifest, run=run, working_root=roots.working)
     manifest["run_id"] = run
     manifest["run_manifest"] = str(run_manifest_path)
-    (WORKING_ROOT / "normalization_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    (roots.working / "normalization_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest

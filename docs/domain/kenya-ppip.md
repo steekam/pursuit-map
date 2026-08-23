@@ -67,6 +67,14 @@ The OCP registry reports these issues:
 
 The comparison supports a Kenya adapter experiment. Kenya is useful for tender, award, contract, and timing analysis. South Africa remains stronger for planning and document metadata. The sources should remain separate until canonical mapping and source-specific quality checks exist.
 
+Run the current raw-source report with:
+
+```bash
+uv run pursuitmap profile ke
+```
+
+The report uses the shared JSON and Markdown shape. It marks the profile as `raw_source` and reports a warning because canonical relationship checks are not available yet.
+
 ## Scope decision
 
 Keep Kenya as a source-comparison track. Do not merge Kenya and South Africa into one baseline. Build a country-specific adapter after this raw profile, then compare canonical field coverage with the same quality report contract.

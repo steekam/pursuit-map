@@ -16,7 +16,7 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 | Phase | Status | Evidence | Next decision |
 | --- | --- | --- | --- |
 | Phase 0 — domain and source understanding | complete | [domain glossary](../domain/glossary.md), [South Africa OCDS notes](../domain/south-africa-ocds.md), [ADR-001](../architecture/adr-001-local-first-foundation.md) | Keep South Africa as the baseline source for this milestone. |
-| Kenya source comparison | complete | [Kenya PPIP source notes](../domain/kenya-ppip.md), [comparison build log](../build-log/2026-08-23-kenya-source-comparison.md) | Build a country-specific adapter before canonical comparison. |
+| Kenya source comparison | in progress | [Kenya PPIP source notes](../domain/kenya-ppip.md), [comparison build log](../build-log/2026-08-23-kenya-source-comparison.md) | Build a streaming country-specific adapter before canonical comparison. |
 | Phase 1 — reproducible data foundation | complete | [canonical schema](../domain/canonical-schema.md), [quality report](../build-log/2026-08-23-phase-0-1-foundation.md), commits `78af6cb`, `183c975` | Whether document acquisition or entity review has higher value. |
 | Phase 1 — descriptive analytics | complete | [descriptive SQL](../../analytics/queries/phase1_descriptive.sql), materialized marts, commit `4759e71` | Which explorer views deserve a product surface. |
 | Phase 1.5 — deterministic retrieval lab | in progress | [ICT taxonomy](../../config/verticals/ict.json), [construction taxonomy](../../config/verticals/construction.json), [healthcare taxonomy](../../config/verticals/healthcare.json), [vertical comparison](../build-log/2026-08-23-vertical-comparison.md) | Build a reviewed challenge set before making accuracy claims. |

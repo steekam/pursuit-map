@@ -74,7 +74,7 @@ def materialize() -> dict:
         raise FileNotFoundError("Run `pursuitmap normalize za` before materializing outputs.")
     normalization = json.loads(manifest_path.read_text(encoding="utf-8"))
     source_sha = normalization["source_snapshot_sha256"]
-    parquet_root = canonical_root(normalization["run_id"])
+    parquet_root = canonical_root(run_id=normalization["run_id"])
     run, run_manifest_path = write_run_manifest("materialize", source_sha, {"query_version": "phase1-marts.1", "source_parquet_root": str(parquet_root)})
     output_root = MATERIALIZED_ROOT / run
     output_root.mkdir(parents=True, exist_ok=True)

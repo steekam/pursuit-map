@@ -57,9 +57,9 @@ def parquet_checksums(parquet_root: Path) -> dict[str, str]:
     }
 
 
-def write_run_manifest(operation: str, source_sha256: str, payload: dict, *, run: str | None = None) -> tuple[str, Path]:
+def write_run_manifest(operation: str, source_sha256: str, payload: dict, *, run: str | None = None, working_root: Path = WORKING_ROOT) -> tuple[str, Path]:
     run = run or run_id(source_sha256, operation)
-    run_dir = WORKING_ROOT / "runs" / run
+    run_dir = working_root / "runs" / run
     run_dir.mkdir(parents=True, exist_ok=True)
     manifest = {
         "run_id": run,
