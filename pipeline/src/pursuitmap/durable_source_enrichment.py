@@ -623,10 +623,12 @@ def status(run: str, country: str = "ke") -> dict:
         try:
             os.kill(int(value["pid"]), 0)
             process_alive = True
-        except (OSError, ValueError, KeyError):
+        except PermissionError:
+            process_alive = None
+        except (ProcessLookupError, ValueError, KeyError):
             process_alive = False
         value["process_alive"] = process_alive
-        if value.get("phase") != "complete" and not process_alive:
+        if value.get("phase") != "complete" and process_alive is False:
             value["last_phase"] = value["phase"]
             value["phase"] = "stopped"
         return value
