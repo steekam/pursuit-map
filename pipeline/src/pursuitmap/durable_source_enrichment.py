@@ -89,6 +89,7 @@ class RateLimiter:
         self.sleeper = sleeper
         self.randomizer = randomizer
         self.next_at = 0.0
+        self.consecutive_429 = 0
         self._lock = threading.Lock()
 
     def reserve(self) -> float:
@@ -235,7 +236,6 @@ def _process_detail_batch(connection, cache, jobs: list[tuple], run: str, config
         for job in network_jobs:
             futures[executor.submit(_scheduled_fetch, job, limiter.reserve(), config.request_timeout_seconds)] = job
         results = cached_results + [(*future.result(), False, None, None, None) for future in as_completed(futures)]
-    consecutive_429 = 0
     network_errors = 0
     for job, status, headers, payload, error, elapsed, cache_hit, digest, path, observed_ocid in results:
         job_id, _, _, _, url, params_json, expected_ocid, external_id, _, attempts, *_ = job
@@ -265,6 +265,7 @@ def _process_detail_batch(connection, cache, jobs: list[tuple], run: str, config
                 _record_event(connection, job_id, attempt, "permanent_failed", elapsed, status, False, "validation", str(error_value), digest)
                 continue
             connection.execute("UPDATE request_jobs SET status = 'succeeded', observed_ocid = ?, updated_at = ? WHERE job_id = ?", [observed_ocid, utc_now(), job_id])
+            limiter.consecutive_429 = 0
             if not cache_hit:
                 _cache_store(cache, "detail", url, params_json, expected_ocid, status, headers.get("Content-Type"), digest, path, observed_ocid, run)
             _record_event(connection, job_id, attempt, "cache_hit" if cache_hit else "succeeded", elapsed, status, False, None, None, digest)
@@ -272,11 +273,11 @@ def _process_detail_batch(connection, cache, jobs: list[tuple], run: str, config
         retryable, error_class = classify_status(status, None, config.retry_statuses)
         if retryable and attempt < config.max_attempts:
             if status == 429:
-                consecutive_429 += 1
+                limiter.consecutive_429 += 1
                 limiter.slow_down()
-                if consecutive_429 >= config.circuit_breaker_429_count:
+                if limiter.consecutive_429 >= config.circuit_breaker_429_count:
                     sleeper(config.circuit_breaker_pause_seconds)
-                    consecutive_429 = 0
+                    limiter.consecutive_429 = 0
             retry_after = headers.get("Retry-After")
             delay = min(config.max_backoff_seconds, float(retry_after) if retry_after and retry_after.isdigit() else 2 ** attempt) + randomizer() * config.jitter_seconds
             state = "retryable_failed"
