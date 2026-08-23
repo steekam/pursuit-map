@@ -256,6 +256,30 @@ def _materialize(connection, run: str, output_root: Path) -> dict:
     return {"rows": len(rows), "parquet": str(parquet)}
 
 
+def _cohort_coverage(connection, run: str) -> list[dict]:
+    canonical = canonical_root("ke")
+    rows = connection.execute("""
+        WITH canonical_cohorts AS (
+            SELECT coalesce(strftime(try_cast(release_date AS DATE), '%Y-%m'), 'unknown') AS cohort,
+                   count(DISTINCT ocid) AS canonical_records
+            FROM read_parquet(?)
+            GROUP BY 1
+        ), matched AS (
+            SELECT coalesce(strftime(try_cast(r.release_date AS DATE), '%Y-%m'), 'unknown') AS cohort,
+                   count(DISTINCT m.ocid) AS matched_ocids
+            FROM source_mappings m
+            JOIN read_parquet(?) r ON r.ocid = m.ocid
+            WHERE m.run_id = ? AND m.canonical_match
+            GROUP BY 1
+        )
+        SELECT c.cohort, c.canonical_records, coalesce(m.matched_ocids, 0) AS matched_ocids,
+               coalesce(m.matched_ocids, 0) / nullif(c.canonical_records, 0) AS coverage
+        FROM canonical_cohorts c LEFT JOIN matched m USING (cohort)
+        ORDER BY c.cohort
+    """, [str(canonical / "releases.parquet"), str(canonical / "releases.parquet"), run]).fetchall()
+    return [{"release_month": row[0], "canonical_records": row[1], "matched_ocids": row[2], "coverage": row[3] or 0} for row in rows]
+
+
 def execute(run: str, *, country: str = "ke", config_path: Path | None = None, sleep: Callable[[float], None] = time.sleep, randomizer: Callable[[], float] = random.random) -> dict:
     roots = country_paths(country)
     config = load_config(config_path)
@@ -355,7 +379,8 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     elapsed_seconds = max(0.0, (datetime.fromisoformat(finished_at) - datetime.fromisoformat(started_at)).total_seconds())
     response_count = connection.execute("SELECT count(*) FROM source_responses WHERE run_id = ?", [run]).fetchone()[0]
     cache_hits = connection.execute("SELECT count(*) FROM request_jobs WHERE run_id = ? AND cache_hit = TRUE", [run]).fetchone()[0]
-    report = {"run_id": run, "country": country, "source_snapshot_sha256": source_sha, "source": config.source, "source_version": config.source_version, "api_version": config.api_version, "rate_policy": {"concurrency": config.concurrency, "refill_rate_per_second": config.refill_rate_per_second, "jitter_seconds": config.jitter_seconds}, "job_counts": {key: counts.get(key, 0) for key in ("succeeded", "pending", "retryable_failed", "permanent_failed")}, "mapping_counts": mapping_counts, "mapping_total": sum(mapping_counts.values()), "detail_jobs": detail_total, "detail_match_rate": materialized["rows"] / detail_total if detail_total else 0, "field_coverage": field_coverage, "http_status_counts": status_counts, "accepted_detail_rows": materialized["rows"], "response_count": response_count, "network_requests": response_count - cache_hits, "cache_hits": cache_hits, "cache_path": str(_cache_path(roots)), "duplicate_mapping_rows": connection.execute("SELECT count(*) - count(DISTINCT ocid || '|' || external_id) FROM source_mappings WHERE run_id = ?", [run]).fetchone()[0], "average_wait_seconds": wait_stats[0], "p95_wait_seconds": wait_stats[1], "effective_request_rate_per_second": response_count / elapsed_seconds if elapsed_seconds else 0, "rate_limit_events": wait_stats[2], "elapsed_seconds": elapsed_seconds, "output_root": str(output_root), "ledger": str(ledger_path), "status": "pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn"}
+    cohort_coverage = _cohort_coverage(connection, run)
+    report = {"run_id": run, "country": country, "source_snapshot_sha256": source_sha, "source": config.source, "source_version": config.source_version, "api_version": config.api_version, "rate_policy": {"concurrency": config.concurrency, "refill_rate_per_second": config.refill_rate_per_second, "jitter_seconds": config.jitter_seconds}, "job_counts": {key: counts.get(key, 0) for key in ("succeeded", "pending", "retryable_failed", "permanent_failed")}, "mapping_counts": mapping_counts, "mapping_total": sum(mapping_counts.values()), "detail_jobs": detail_total, "detail_match_rate": materialized["rows"] / detail_total if detail_total else 0, "field_coverage": field_coverage, "cohort_coverage": cohort_coverage, "http_status_counts": status_counts, "accepted_detail_rows": materialized["rows"], "response_count": response_count, "network_requests": response_count - cache_hits, "cache_hits": cache_hits, "cache_path": str(_cache_path(roots)), "duplicate_mapping_rows": connection.execute("SELECT count(*) - count(DISTINCT ocid || '|' || external_id) FROM source_mappings WHERE run_id = ?", [run]).fetchone()[0], "average_wait_seconds": wait_stats[0], "p95_wait_seconds": wait_stats[1], "effective_request_rate_per_second": response_count / elapsed_seconds if elapsed_seconds else 0, "rate_limit_events": wait_stats[2], "elapsed_seconds": elapsed_seconds, "output_root": str(output_root), "ledger": str(ledger_path), "status": "pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn"}
     write_run_manifest("source-enrich", source_sha, {"country": country, "report": report, "ledger": str(ledger_path), "output_root": str(output_root)}, run=run, working_root=roots.working)
     (output_root / "source_enrichment_execution_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     (output_root / "source_enrichment_execution_report.md").write_text(render_report(report), encoding="utf-8")
@@ -372,6 +397,8 @@ def render_report(report: dict) -> str:
     lines.extend(["", f"Accepted detail rows: {report['accepted_detail_rows']}", f"Stored responses: {report['response_count']}", f"Network requests: {report['network_requests']}", f"Cache hits: {report['cache_hits']}", f"Detail match rate: {report['detail_match_rate']:.3f}", f"Average wait: {report['average_wait_seconds']:.3f}s", f"P95 wait: {report['p95_wait_seconds']:.3f}s", f"Rate-limit events: {report['rate_limit_events']}", ""])
     lines.extend(["## Field coverage", ""])
     lines.extend(f"- `{key}`: {value}" for key, value in report["field_coverage"].items())
+    lines.extend(["", "## Canonical release-month coverage", ""])
+    lines.extend(f"- `{row['release_month']}`: {row['matched_ocids']}/{row['canonical_records']} ({row['coverage']:.3%})" for row in report["cohort_coverage"])
     return "\n".join(lines)
 
 

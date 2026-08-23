@@ -34,6 +34,7 @@ def test_plan_run_materialize_with_fake_ppip(monkeypatch, tmp_path):
     canonical.mkdir()
     connection = duckdb.connect()
     connection.execute("COPY (SELECT 'ocds-5whusi-123-ABC' AS ocid, 'release-1' AS release_id) TO ? (FORMAT PARQUET)", [str(canonical / "tenders.parquet")])
+    connection.execute("COPY (SELECT 'ocds-5whusi-123-ABC' AS ocid, '2025-01-01' AS release_date) TO ? (FORMAT PARQUET)", [str(canonical / "releases.parquet")])
     connection.close()
     (roots.working / "normalization_manifest.json").write_text(json.dumps({"parquet_root": str(canonical)}), encoding="utf-8")
 
@@ -65,6 +66,7 @@ def test_reuses_validated_responses_across_runs(monkeypatch, tmp_path):
     canonical.mkdir()
     connection = duckdb.connect()
     connection.execute("COPY (SELECT 'ocds-5whusi-123-ABC' AS ocid, 'release-1' AS release_id) TO ? (FORMAT PARQUET)", [str(canonical / "tenders.parquet")])
+    connection.execute("COPY (SELECT 'ocds-5whusi-123-ABC' AS ocid, '2025-01-01' AS release_date) TO ? (FORMAT PARQUET)", [str(canonical / "releases.parquet")])
     connection.close()
     (roots.working / "normalization_manifest.json").write_text(json.dumps({"parquet_root": str(canonical)}), encoding="utf-8")
     list_payload = json.dumps({"data": [{"id": 123, "ocid": "ocds-5whusi-123-ABC", "tender_ref": "ABC"}], "current_page": 1, "last_page": 1}).encode()
