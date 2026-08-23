@@ -204,6 +204,21 @@ def _cache_store(cache, job_type: str, url: str, params_json: str, expected_ocid
     cache.execute("INSERT OR REPLACE INTO cached_responses VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [_cache_key(job_type, url, params_json, expected_ocid), job_type, url, params_json, expected_ocid, status, content_type, response_hash, response_path, observed_ocid, source_run_id, utc_now()])
 
 
+def _backfill_cache_from_run(connection: duckdb.DuckDBPyConnection, cache: duckdb.DuckDBPyConnection, run: str) -> int:
+    """Make successful captured responses reusable by later staged runs."""
+    rows = connection.execute("""
+        SELECT j.job_type, j.url, j.params_json, j.expected_ocid, r.http_status,
+               r.content_type, r.response_hash, r.response_path, j.observed_ocid
+        FROM request_jobs j
+        JOIN (SELECT *, row_number() OVER (PARTITION BY job_id ORDER BY response_id DESC) AS rn FROM source_responses) r
+          ON r.job_id = j.job_id AND r.rn = 1
+        WHERE j.run_id = ? AND j.status = 'succeeded' AND r.http_status = 200
+    """, [run]).fetchall()
+    for job_type, url, params_json, expected_ocid, status, content_type, digest, path, observed_ocid in rows:
+        _cache_store(cache, job_type, url, params_json, expected_ocid, status, content_type, digest, path, observed_ocid, run)
+    return len(rows)
+
+
 def _list_success(connection, run: str, job: tuple, payload: bytes, response_hash: str, config: EngineConfig, detail_limit: int) -> None:
     job_id, _, _, endpoint, _, params_json, *_ = job
     data = json.loads(payload)
@@ -337,6 +352,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     _create_ledger(connection)
     _create_sequences(connection)
     cache = _cache_connection(roots)
+    _backfill_cache_from_run(connection, cache, run)
     connection.execute("UPDATE run_metadata SET status = 'running', resume_count = resume_count + 1 WHERE run_id = ?", [run])
     started_at = connection.execute("SELECT started_at FROM run_metadata WHERE run_id = ?", [run]).fetchone()[0]
     if not started_at:
