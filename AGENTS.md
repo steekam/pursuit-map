@@ -23,7 +23,7 @@ Read this file before changing the repository. Keep changes within the current p
 
 1. Read the relevant ADR and contract entry.
 2. Make one cohesive change.
-3. Run `uv run pytest -q`, `uv run python -m compileall -q src tests`, and `git diff --check`.
+3. Run `uv run pytest -q`, `uv run python -m compileall -q pipeline/src tests`, and `git diff --check`.
 4. Run the affected CLI command against a fixture, then the current snapshot when practical.
 5. Commit one logical change with an imperative message. Do not use checkpoint commits.
 

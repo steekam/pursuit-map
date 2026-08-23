@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DATA_ROOT = PROJECT_ROOT / "data"
 RAW_ROOT = DATA_ROOT / "raw" / "south_africa"
 WORKING_ROOT = DATA_ROOT / "working" / "south_africa"

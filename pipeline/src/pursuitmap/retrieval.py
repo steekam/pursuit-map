@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_TAXONOMY_PATH = Path(__file__).resolve().parents[2] / "config" / "verticals" / "ict.json"
+DEFAULT_TAXONOMY_PATH = Path(__file__).resolve().parents[3] / "config" / "verticals" / "ict.json"
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -274,4 +274,3 @@ def score_records(
         )
     )
     return [item[1] for item in indexed]
-

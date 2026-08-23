@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pursuitmap"
+version = "0.1.0"
+description = "Reproducible procurement data foundation for PursuitMap"
+requires-python = ">=3.11"
+dependencies = [
+  "duckdb>=1.1,<2",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8,<9",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[project.scripts]
+pursuitmap = "pursuitmap.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
