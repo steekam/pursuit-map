@@ -20,6 +20,7 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 | Phase 1 — reproducible data foundation | complete | [canonical schema](../domain/canonical-schema.md), [quality report](../build-log/2026-08-23-phase-0-1-foundation.md), commits `78af6cb`, `183c975` | Whether document acquisition or entity review has higher value. |
 | Phase 1 — descriptive analytics | complete | [descriptive SQL](../../analytics/queries/phase1_descriptive.sql), materialized marts, commit `4759e71` | Which explorer views deserve a product surface. |
 | Phase 1.5 — deterministic retrieval lab | in progress | [ICT taxonomy](../../config/verticals/ict.json), [construction taxonomy](../../config/verticals/construction.json), [healthcare taxonomy](../../config/verticals/healthcare.json), [vertical comparison](../build-log/2026-08-23-vertical-comparison.md) | Build a reviewed challenge set before making accuracy claims. |
+| Phase 1.5 — document feature review | pending human review | [document rule registry](../../config/document-extraction/rules.json), captured run `data/enriched/kenya/documents-source-enrich-20260823T174027305351Z-5501335abfb5` | Review all 17 content hashes and create the gold set. |
 | Phase 1.5 — Procurement Explorer | not started | — | Select the first explorer slice and its evidence contract. |
 | Phase 2 — reviewed retrieval evaluation | not started | — | Compare lexical, BM25, embedding, or hybrid retrieval only after labels exist. |
 | Phase 3 — entity-resolution study | not started | — | Decide whether deterministic review supports a bounded resolution experiment. |
@@ -49,7 +50,8 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 - Planning semantics remain weak. The current snapshot has 0 planning items.
 - Supplier ID `0` remains in 4,326 award-supplier rows.
 - Contract timing has 171 missing period starts and 173 sentinel or missing period fields.
-- Documents contain metadata and URLs. Binary acquisition and extraction are deferred.
+- Document extraction produced 9,212 evidence occurrences across 17 content hashes. The report records 281 conflicts and 281 ambiguities. A conflict means a rule observed more than one normalized value for one feature in a document. An ambiguity means the primary-value rule could not select one value without risking an unsupported choice. These are review queues, not confirmed source errors.
+- OCR provenance is unavailable in the existing Docling manifests. OCR-derived values remain unknown until page-level OCR status is captured.
 - Kenya has 0 documents, 0 planning objects, 0 plan items, and 0 tender amounts in the canonical snapshot.
 - Kenya quality flags are materialized in a source-preserving enrichment table with rule version `kenya-quality-1`.
 - Kenya PPIP source enrichment has a durable DuckDB ledger and passed the first 25-limit pilot with 100% detail OCID validation.
@@ -57,8 +59,10 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 
 ## Immediate next work
 
-1. Create a small reviewed retrieval challenge set from fixtures and current-source candidates.
-2. Compare title-only, title-plus-description, category, and full-metadata retrieval against the set.
-3. Measure the value of source enrichment, document acquisition, entity resolution, and explorer implementation.
+1. Human-review the 17 unique document hashes. For each document, verify role, tender number, dates, buyer, eligibility, technical scope, quantities, commercial terms, evaluation criteria, ICT terms, and page/table evidence.
+2. Record reviewed values and page references in a gold file keyed by content hash. Keep conflicting and ambiguous occurrences visible beside the selected value.
+3. Measure field-level agreement and evidence completeness. Do not call the result precision, recall, or commercial accuracy beyond this reviewed sample.
+4. Create a small reviewed retrieval challenge set from fixtures and current-source candidates.
+5. Compare title-only, title-plus-description, category, and full-metadata retrieval against the set.
 
 Every completed step should update this tracker and add a build-log entry. The tracker records project state; the build log records the reasoning and measurements behind state changes.
