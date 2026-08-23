@@ -2,18 +2,18 @@
 
 ## Source selected
 
-PursuitMap starts with National Treasury's Office of the Chief Procurement Officer (OCPO) data published through the eTender Publications Portal and exposed in OCDS format.
+PursuitMap uses National Treasury's Office of the Chief Procurement Officer (OCPO) data. The eTender Publications Portal publishes the data in OCDS format.
 
 - Transparency portal: <https://data.etenders.gov.za/>
 - OCDS API documentation: <https://ocds-api.etenders.gov.za/swagger/index.html>
 - OCP Data Registry publication: <https://data.open-contracting.org/en/publication/143>
 - OCDS standard: <https://standard.open-contracting.org/latest/en/>
 
-The registry describes compiled contracting-process records available from February 2017 onward, with JSONL, CSV, and Excel bulk formats. The raw ingestion currently uses the registry's full JSONL gzip artifact and records its URL, retrieval time, byte size, and SHA-256 hash in `data/raw/south_africa/manifest.json`.
+The registry describes compiled contracting-process records from February 2017 onward. It provides JSONL, CSV, and Excel bulk formats. Raw ingestion uses the full JSONL gzip artifact. The ingestion manifest records its URL, retrieval time, byte size, and SHA-256 hash in `data/raw/south_africa/manifest.json`.
 
 ## Source shape observed/documented
 
-Each JSONL object is treated as a compiled OCDS release when it is a direct object. If a future source artifact contains a package with a `releases` array, ingestion expands that array into individual releases. The useful first-level fields are:
+Ingestion treats each direct JSONL object as a compiled OCDS release. If a future artifact contains a package with a `releases` array, ingestion expands the array into individual releases. The main first-level fields are:
 
 | OCDS field | PursuitMap use | Notes |
 | --- | --- | --- |
@@ -29,11 +29,11 @@ Each JSONL object is treated as a compiled OCDS release when it is a direct obje
 | `contracts` | Contract stage | Includes award link, signature date, period, value, and documents. |
 | `documents` | Evidence/provenance | Retain URLs and metadata in a bridge table. |
 
-The source registry currently reports no tender, award, or contract items in its summary. The pipeline still captures item arrays when present so this absence is measured rather than baked into the domain model.
+The source registry currently reports no tender, award, or contract items in its summary. The pipeline captures item arrays when present. The output can therefore measure item coverage.
 
 ## Known source limitations
 
-The publisher coverage is not a complete census of South African procurement. It depends on entities sharing data with National Treasury, and the registry notes exclusions and voluntary participation. The registry also reports duplicate releases, empty fields/arrays, invalid placeholder values, and missing `parties` arrays. These are source observations, not normalization errors.
+The publisher coverage is not a complete census of South African procurement. It depends on entities sharing data with National Treasury. The registry notes exclusions and voluntary participation. It also reports duplicate releases, empty fields or arrays, invalid placeholder values, and missing `parties` arrays. These conditions come from the source.
 
 ## Initial canonical mapping
 
@@ -53,7 +53,7 @@ Values preserve source amounts and currencies, with explicit `missing`, `invalid
 
 ## Uncertain mappings to revisit
 
-- A plan may be represented in `planning` without `planning.items`; absence is not evidence that no plan exists.
-- A compiled release can represent the latest known state of a process, while release history is carried by separate releases/API responses. Phase 1 must decide whether to deduplicate by `ocid`, preserve every release, or maintain both views.
-- `buyer` and award `suppliers` are procurement-process roles. `parties` is a broader directory and should not be treated as a complete buyer/supplier master.
-- OCDS `tender.mainProcurementCategory` is useful for coarse classification, but it is not yet PursuitMap's ICT/networking/cybersecurity capability taxonomy.
+- A plan can contain `planning` without `planning.items`. The absence of items does not prove that no plan exists.
+- A compiled release can represent the latest known process state. Separate releases or API responses can carry release history. Phase 1 must choose whether to deduplicate by `ocid`, preserve every release, or maintain both views.
+- `buyer` and award `suppliers` describe procurement-process roles. `parties` describes a broader directory. Treat it as an incomplete buyer and supplier reference.
+- OCDS `tender.mainProcurementCategory` supports coarse classification. PursuitMap's ICT, networking, and cybersecurity capability taxonomy remains derived.

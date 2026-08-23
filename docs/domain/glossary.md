@@ -21,10 +21,10 @@ The glossary uses terms from procurement, data engineering, information retrieva
 
 Important distinctions:
 
-- A tender is not an opportunity.
-- A signal is not evidence.
-- A raw buyer name is not a canonical Buyer.
-- A raw supplier name is not a canonical Supplier.
+- A tender records a solicitation. An opportunity is derived from evidence and signals.
+- A signal is a derived observation. Evidence is a source-backed fact.
+- A raw buyer name is a source value. A canonical Buyer is an identity observation with source context.
+- A raw supplier name is a source value. A canonical Supplier is an identity observation with source context.
 
 ## Data and evidence
 
@@ -50,9 +50,9 @@ Important distinctions:
 | Baseline | A simple method used as a reference for comparison. |
 | Taxonomy | A versioned set of categories, terms, weights, and exclusions. |
 | Field weight | The value that controls how strongly a matched field affects a rule score. |
-| Rule score | A deterministic number calculated from configured matches and weights. It is not a probability. |
+| Rule score | A deterministic number calculated from configured matches and weights. The score has no probability meaning. |
 | Exclusion | An explicit rule that removes a record or category from the result set. |
-| Candidate coverage | The number or share of relevant records that a retrieval method returns. It is not recall without a reviewed gold set. |
+| Candidate coverage | The number or share of relevant records that a retrieval method returns. The measure becomes recall only with a reviewed gold set. |
 | Result overlap | The number of records shared by two result sets. |
 
 ## Evaluation
@@ -77,7 +77,7 @@ For classification evaluation, define the positive class before calculating a me
 | Mean reciprocal rank (MRR) | The mean of the reciprocal rank of the first relevant result for each query. |
 | Normalized discounted cumulative gain (nDCG) | A ranking metric that gives more credit when relevant results appear near the top. |
 
-Precision, recall, accuracy, F1, MRR, and nDCG require a reviewed reference. Candidate counts and result overlap do not establish retrieval quality.
+Precision, recall, accuracy, F1, MRR, and nDCG require a reviewed reference. Candidate counts and result overlap alone do not establish retrieval quality.
 
 ## Interpretation rules
 

@@ -2,18 +2,18 @@
 
 ## Decision
 
-Every transformation writes a run manifest and preserves raw source references. Canonical tables retain source IDs and raw JSON. Derived outputs carry snapshot and query/rule versions. Phase 1–1.5 intelligence uses deterministic lexical rules only.
+Every transformation writes a run manifest and preserves raw source references. Canonical tables retain source IDs and raw JSON. Derived outputs carry snapshot and query or rule versions. Phase 1 and Phase 1.5 use deterministic lexical rules.
 
-Canonical and materialized outputs are physically stored in run-specific directories. A latest-run manifest is only a pointer; it does not overwrite prior outputs. Consumers may select a canonical normalization run explicitly with its run ID.
+Canonical and materialized outputs use run-specific directories. A latest-run manifest points to one run. It does not replace earlier outputs. Consumers can select a canonical normalization run by run ID.
 
 ## Why
 
-The source has strong text, timing, document metadata, and relationship primitives but weak planning semantics and inconsistent identifiers. Provenance and explicit quality flags prevent missing data, zero values, and placeholders from being mistaken for negative evidence.
+The source has useful text, timing, document metadata, and relationship fields. Planning semantics are weak. Identifiers are inconsistent. Provenance and quality flags distinguish missing data, zero values, and placeholders from negative evidence.
 
 ## Consequences
 
 - A result can be regenerated from a hashed raw snapshot.
-- Prior canonical and derived outputs remain available for comparison and audit.
-- Rule scores remain inspectable and comparable with simpler baselines.
+- Earlier canonical and derived outputs remain available for comparison and audit.
+- Rule scores remain inspectable and comparable with simple baselines.
 - Entity resolution, document acquisition, and learned ranking remain separate decisions.
-- Source changes produce measured drift rather than silent replacement.
+- Source changes produce measured drift. The pipeline does not silently replace earlier results.

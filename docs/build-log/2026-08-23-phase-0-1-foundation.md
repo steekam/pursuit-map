@@ -1,12 +1,12 @@
-# 2026-08-23 — Phase 0/1 foundation started
+# 2026-08-23 — Phase 0 and Phase 1 foundation
 
 ## Hypothesis
 
-The South African National Treasury OCDS publication is accessible in a compact, machine-readable form and is sufficient to begin a trustworthy local canonical data layer.
+The South African National Treasury OCDS publication is accessible in a compact, machine-readable format. It can support the first local canonical data layer.
 
 ## Work
 
-Created a minimal Python project with CLI commands for ingestion, normalization, profiling, materialization, and deterministic ICT retrieval. Added raw-source manifests, release history, corrected OCDS date/value semantics, identity audits, DuckDB normalization, Parquet tables, descriptive marts, evidence-bearing search results, schema contracts, verification checks, domain notes, and architecture decisions.
+Created a Python project with CLI commands for ingestion, normalization, profiling, materialization, and deterministic ICT retrieval. Added raw-source manifests, release history, corrected OCDS date and value semantics, identity audits, DuckDB normalization, Parquet tables, descriptive marts, evidence-bearing search results, schema contracts, verification checks, domain notes, and architecture decisions.
 
 ## Measurement
 
@@ -14,15 +14,15 @@ The downloaded snapshot is 13,330,673 bytes with SHA-256 `a79b2ce7dccdd7f060d4d4
 
 ## Observation
 
-The registry identifies incomplete publisher coverage, duplicate releases, empty/invalid fields, and frequent absence of `parties`. Source identifiers must remain separate from later entity resolution. The first local snapshot contains no `planning.items` rows, even though planning objects are present. Supplier ID `0` appears in 4,326 award-supplier rows, and 173 contract period fields are sentinel/missing, so both remain warnings rather than being silently repaired.
+The registry identifies incomplete publisher coverage, duplicate releases, empty or invalid fields, and frequent absence of `parties`. Source identifiers remain separate from future entity resolution. The snapshot contains no `planning.items` rows, although planning objects are present. Supplier ID `0` appears in 4,326 award-supplier rows. 173 contract period fields are sentinel or missing. The pipeline reports both conditions as warnings.
 
 ## Decision
 
-Start with the registry's full JSONL gzip artifact. Keep lifecycle relationships explicit with `award_suppliers` and `documents` tables. Use source-field lexical rules for the first retrieval baseline; defer entity merging, document downloads, and learned opportunity scoring.
+Use the registry's full JSONL gzip artifact. Keep lifecycle relationships in explicit `award_suppliers` and `documents` tables. Use source-field lexical rules for the first retrieval baseline. Defer entity merging, document downloads, and learned opportunity scoring.
 
 ## Next
 
-Next, compare deterministic retrieval baselines, add a reviewed query/challenge set, and decide whether document acquisition or entity-resolution work has enough measured value to justify the next phase.
+Next, compare deterministic retrieval baselines. Add a reviewed query challenge set. Measure the value of document acquisition and entity-resolution work before selecting the next phase.
 
 ## Publication
 

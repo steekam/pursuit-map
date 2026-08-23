@@ -2,14 +2,14 @@
 
 Last updated: 2026-08-23  
 Current phase: Phase 1.5 — deterministic retrieval lab  
-Overall status: Foundation complete; evaluation and explorer work remain
+Overall status: Foundation complete. Evaluation and explorer work remain.
 
 ## Status vocabulary
 
-- `complete` — acceptance criteria met and evidence exists in the repository.
-- `in progress` — active work has a bounded next step and partial evidence.
-- `blocked` — work cannot proceed without a decision, data, or external dependency.
-- `not started` — no implementation has begun.
+- `complete` — The acceptance criteria are met. Evidence exists in the repository.
+- `in progress` — Work has a bounded next step and partial evidence.
+- `blocked` — Work needs a decision, data, or external dependency.
+- `not started` — No implementation has begun.
 
 ## Phase overview
 
@@ -31,29 +31,29 @@ Overall status: Foundation complete; evaluation and explorer work remain
 
 ## Phase 1 acceptance evidence
 
-- Source snapshot is hashed and preserved with a manifest.
-- Current baseline produces 37,894 releases, 37,894 tenders, 11,187 awards, 1,653 contracts, and 43,421 documents.
-- Tender `startDate`/`endDate` mapping is corrected and tender periods are populated.
-- Canonical outputs are physically versioned by normalization run.
-- Marts, reports, and retrieval outputs are physically versioned by operation run.
-- Lifecycle integrity checks pass; source-quality warnings remain visible.
+- The source snapshot has a hash and manifest.
+- The current baseline produces 37,894 releases, 37,894 tenders, 11,187 awards, 1,653 contracts, and 43,421 documents.
+- Tender `startDate` and `endDate` mapping is corrected. Tender periods are populated.
+- Canonical outputs use normalization run directories.
+- Marts, reports, and retrieval outputs use operation run directories.
+- Lifecycle integrity checks pass. Source-quality warnings remain visible.
 - Deterministic ICT retrieval returns 7,529 candidates on the current snapshot.
-- Repeated test runs pass with 12 tests.
-- Cross-session rules are encoded in [`AGENTS.md`](../../AGENTS.md) and [`pipeline-contract.json`](../../config/pipeline-contract.json).
+- The test suite has 13 passing tests.
+- Cross-session rules live in [`AGENTS.md`](../../AGENTS.md) and [`pipeline-contract.json`](../../config/pipeline-contract.json).
 
 ## Current gaps
 
 - No human-reviewed retrieval gold set exists.
-- Planning semantics remain weak: 0 planning items in the current snapshot.
+- Planning semantics remain weak. The current snapshot has 0 planning items.
 - Supplier ID `0` remains in 4,326 award-supplier rows.
-- Contract timing contains 171 missing period starts and 173 sentinel/missing period fields.
-- Documents are metadata and URLs only; binary acquisition and extraction are deferred.
-- No entity merging, prediction, lead scoring, API, or browser UI exists.
+- Contract timing has 171 missing period starts and 173 sentinel or missing period fields.
+- Documents contain metadata and URLs. Binary acquisition and extraction are deferred.
+- Entity merging, prediction, lead scoring, API, and browser UI are not implemented.
 
 ## Immediate next work
 
 1. Create a small reviewed retrieval challenge set from fixtures and current-source candidates.
-2. Compare title-only, title-plus-description, category, and full-metadata retrieval against that set.
-3. Decide whether document acquisition, entity resolution, or explorer implementation has the highest measured value.
+2. Compare title-only, title-plus-description, category, and full-metadata retrieval against the set.
+3. Measure the value of document acquisition, entity resolution, and explorer implementation.
 
 Every completed step should update this tracker and add a build-log entry. The tracker records project state; the build log records the reasoning and measurements behind state changes.
