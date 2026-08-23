@@ -55,6 +55,9 @@ def test_resume_recovers_operator_interrupted_list_job():
     connection.execute("UPDATE request_jobs SET status = 'permanent_failed', error_class = 'RuntimeError', error_message = 'Query interrupted'")
     assert engine._recover_interrupted_jobs(connection, "run") == 1
     assert connection.execute("SELECT status, error_class FROM request_jobs").fetchone() == ("pending", None)
+    connection.execute("UPDATE request_jobs SET status = 'running'")
+    assert engine._recover_interrupted_jobs(connection, "run") == 1
+    assert connection.execute("SELECT status FROM request_jobs").fetchone()[0] == "pending"
 
 
 def test_plan_run_materialize_with_fake_ppip(monkeypatch, tmp_path):

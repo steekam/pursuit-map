@@ -130,7 +130,7 @@ def _create_ledger(connection: duckdb.DuckDBPyConnection) -> None:
 
 
 def _recover_interrupted_jobs(connection: duckdb.DuckDBPyConnection, run: str) -> int:
-    result = connection.execute("UPDATE request_jobs SET status = 'pending', next_attempt_at = 0, error_class = NULL, error_message = NULL, updated_at = ? WHERE run_id = ? AND status = 'permanent_failed' AND error_class = 'RuntimeError' AND error_message = 'Query interrupted'", [utc_now(), run])
+    result = connection.execute("UPDATE request_jobs SET status = 'pending', next_attempt_at = 0, error_class = NULL, error_message = NULL, updated_at = ? WHERE run_id = ? AND (status = 'running' OR (status = 'permanent_failed' AND error_class = 'RuntimeError' AND error_message = 'Query interrupted'))", [utc_now(), run])
     return result.fetchone()[0] if result.description else 0
 
 
