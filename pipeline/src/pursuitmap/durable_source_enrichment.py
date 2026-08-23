@@ -340,12 +340,19 @@ def _list_success(connection, run: str, job: tuple, payload: bytes, response_has
     records = data.get("data") or []
     page = int(json.loads(params_json).get("page", 1))
     canonical_root = canonical_root_for_run(connection, run)
+    canonical_ocids = {
+        row[0]
+        for row in connection.execute(
+            "SELECT ocid FROM read_parquet(?) WHERE ocid IS NOT NULL",
+            [str(canonical_root / "tenders.parquet")],
+        ).fetchall()
+    }
     for record in records:
         ocid = record.get("ocid")
         external_id = str(record.get("id")) if record.get("id") is not None else None
         if not ocid or not external_id:
             continue
-        match = connection.execute("SELECT count(*) FROM read_parquet(?) WHERE ocid = ?", [str(canonical_root / "tenders.parquet"), ocid]).fetchone()[0] > 0
+        match = ocid in canonical_ocids
         existing = connection.execute("SELECT count(*) FROM source_mappings WHERE run_id = ? AND ocid = ? AND external_id = ?", [run, ocid, external_id]).fetchone()[0]
         if not existing:
             connection.execute("INSERT INTO source_mappings VALUES (nextval('mapping_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run, endpoint, page, response_hash, external_id, ocid, record.get("tender_ref"), match, utc_now()])
@@ -370,12 +377,13 @@ def _materialize(connection, run: str, output_root: Path) -> dict:
     rows = []
     canonical = canonical_root("ke")
     source_sha = connection.execute("SELECT source_snapshot_sha256 FROM run_metadata WHERE run_id = ?", [run]).fetchone()[0]
+    release_ids = dict(connection.execute("SELECT ocid, min(release_id) FROM read_parquet(?) GROUP BY ocid", [str(canonical / "tenders.parquet")]).fetchall())
     for job_id, url, response_path, expected_ocid, retrieved_at, http_status, response_hash in connection.execute("""SELECT j.job_id, j.url, j.response_path, j.expected_ocid, r.retrieved_at, r.http_status, r.response_hash
         FROM request_jobs j JOIN (SELECT *, row_number() OVER (PARTITION BY job_id ORDER BY response_id DESC) AS rn FROM source_responses) r ON r.job_id = j.job_id
         WHERE j.run_id = ? AND j.job_type = 'detail' AND j.status = 'succeeded' AND r.rn = 1 ORDER BY j.job_id""", [run]).fetchall():
         payload = Path(response_path).read_bytes()
         parsed = parse_tender_payload(payload)
-        release_id = connection.execute("SELECT min(release_id) FROM read_parquet(?) WHERE ocid = ?", [str(canonical / "tenders.parquet"), expected_ocid]).fetchone()[0]
+        release_id = release_ids.get(expected_ocid)
         rows.append((source_sha, "ke", expected_ocid, release_id, job_id, url, retrieved_at, http_status, response_hash, *(parsed.get(column) for column in SCHEMA[9:-1]), response_path))
     parquet = output_root / "source_enrichment.parquet"
     if rows:
