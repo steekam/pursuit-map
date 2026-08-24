@@ -377,6 +377,7 @@ def promote(discovery_run: str, *, country: str = "ke", sample_per_cohort: int =
     child_run = run_id(source_sha, "source-enrich-promotion")
     output_root = roots.enriched / child_run
     output_root.mkdir(parents=True, exist_ok=True)
+    (output_root / "responses").mkdir(exist_ok=True)
     ledger = duckdb.connect(str(output_root / "ledger.duckdb"))
     _create_detail_ledger(ledger)
     _create_sequences(ledger)
