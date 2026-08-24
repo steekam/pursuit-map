@@ -1,6 +1,6 @@
 # PursuitMap phase tracker
 
-Last updated: 2026-08-23  
+Last updated: 2026-08-24
 Current phase: Phase 1.5 — deterministic retrieval lab  
 Overall status: Foundation complete. Evaluation and explorer work remain.
 
@@ -64,5 +64,13 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 3. Measure field-level agreement and evidence completeness. Do not call the result precision, recall, or commercial accuracy beyond this reviewed sample.
 4. Create a small reviewed retrieval challenge set from fixtures and current-source candidates.
 5. Compare title-only, title-plus-description, category, and full-metadata retrieval against the set.
+
+## Queued cleanup tasks
+
+| Task | Status | Acceptance evidence |
+| --- | --- | --- |
+| Rename enrichment state `eligible` to `mapping_pending` (or `canonical_unmapped`) | queued | Schema, code, tests, reports, and existing Parquet outputs use the approved name; migration preserves row counts and provenance. |
+| Document the state transition rules for `mapping_pending`, `retry_later`, `validated_detail`, and `source_only` | queued | Domain note and fixture expectations explain each state and its next action. |
+| Reconcile and re-materialize the current Kenya eligibility output after the rename | queued | Before/after counts match; manifest and checksums are recorded. |
 
 Every completed step should update this tracker and add a build-log entry. The tracker records project state; the build log records the reasoning and measurements behind state changes.
