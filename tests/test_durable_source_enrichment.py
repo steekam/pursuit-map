@@ -163,13 +163,20 @@ def test_supervisor_resumes_after_rate_limit_pause(monkeypatch, tmp_path):
     def fake_execute(run, **kwargs):
         return next(results)
 
+    profiles = []
+
+    def fake_profile(run, **kwargs):
+        profiles.append(run)
+        return {"enriched_rows": 7, "materialization_sha256": "sha", "materialization_consistency": {"status": "consistent"}}
+
     config = engine.EngineConfig("test", "1", "1", ("/list",), "/detail/{id}", circuit_breaker_pause_seconds=12)
     monkeypatch.setattr(engine, "load_config", lambda path=None: config)
-    result = engine.supervise("run", max_cycles=3, max_runtime_seconds=100, sleep=sleeps.append, clock=lambda: 0.0, execute_fn=fake_execute)
+    result = engine.supervise("run", max_cycles=3, max_runtime_seconds=100, sleep=sleeps.append, clock=lambda: 0.0, execute_fn=fake_execute, profile_fn=fake_profile)
 
     assert result["status"] == "complete"
     assert len(result["cycles"]) == 2
     assert sleeps == [12]
+    assert profiles == ["run", "run"]
     state = json.loads((roots.enriched / "run" / "supervisor.json").read_text())
     assert state["phase"] == "complete"
     assert state["cycle_count"] == 2

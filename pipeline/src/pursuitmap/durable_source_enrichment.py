@@ -699,6 +699,7 @@ def supervise(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.time,
     execute_fn: Callable[..., dict] = execute,
+    profile_fn: Callable[..., dict] | None = None,
 ) -> dict:
     """Run resumable enrichment cycles until completion or an explicit bound.
 
@@ -712,6 +713,8 @@ def supervise(
     output_root.mkdir(parents=True, exist_ok=True)
     state_path = output_root / "supervisor.json"
     config = load_config(config_path)
+    if profile_fn is None:
+        from .enrichment_profile import profile as profile_fn
     started = clock()
     cycles: list[dict] = []
 
@@ -735,6 +738,12 @@ def supervise(
         cycle_started = clock()
         write_state("running")
         result = execute_fn(run, country=country, config_path=config_path, workers=workers)
+        profile_result = None
+        profile_error = None
+        try:
+            profile_result = profile_fn(run, country=country)
+        except Exception as error:
+            profile_error = str(error)
         cycle = {
             "cycle": len(cycles) + 1,
             "started_at_epoch": cycle_started,
@@ -743,6 +752,12 @@ def supervise(
             "job_counts": result.get("job_counts", {}),
             "accepted_detail_rows": result.get("accepted_detail_rows", 0),
             "rate_limit_events": result.get("rate_limit_events", 0),
+            "profile": {
+                "enriched_rows": profile_result.get("enriched_rows") if profile_result else None,
+                "materialization_sha256": profile_result.get("materialization_sha256") if profile_result else None,
+                "consistency": profile_result.get("materialization_consistency", {}).get("status") if profile_result else None,
+                "error": profile_error,
+            },
         }
         cycles.append(cycle)
         counts = result.get("job_counts", {})
