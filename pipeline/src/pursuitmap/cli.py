@@ -19,6 +19,7 @@ from .durable_source_enrichment import plan as source_enrich_plan
 from .durable_source_enrichment import report as source_enrich_report
 from .durable_source_enrichment import resume as source_enrich_resume
 from .durable_source_enrichment import status as source_enrich_status
+from .durable_source_enrichment import supervise as source_enrich_supervise
 from .verification import verify_outputs
 from .document_download import plan as document_plan
 from .document_download import run as document_run
@@ -74,6 +75,12 @@ def main() -> None:
     durable_status = durable_subparsers.add_parser("status")
     durable_status.add_argument("country", choices=["ke"])
     durable_status.add_argument("--run-id", required=True)
+    durable_supervise = durable_subparsers.add_parser("supervise")
+    durable_supervise.add_argument("country", choices=["ke"])
+    durable_supervise.add_argument("--run-id", required=True)
+    durable_supervise.add_argument("--workers", type=int)
+    durable_supervise.add_argument("--max-cycles", type=int, default=100)
+    durable_supervise.add_argument("--max-runtime-hours", type=float, default=24.0)
     durable_benchmark = durable_subparsers.add_parser("benchmark")
     durable_benchmark.add_argument("country", choices=["ke"])
     durable_benchmark.add_argument("--run-id", required=True)
@@ -140,6 +147,8 @@ def main() -> None:
             result = source_enrich_benchmark(args.run_id, country=args.country, sample_per_level=args.sample_per_level, rates=tuple(args.rates), concurrency=tuple(args.workers))
         elif args.source_enrich_action == "status":
             result = source_enrich_status(args.run_id, country=args.country)
+        elif args.source_enrich_action == "supervise":
+            result = source_enrich_supervise(args.run_id, country=args.country, workers=args.workers, max_cycles=args.max_cycles, max_runtime_seconds=args.max_runtime_hours * 60 * 60)
         else:
             result = source_enrich_report(args.run_id, country=args.country)
     elif args.command in {"report", "profile"}:

@@ -148,3 +148,28 @@ def test_reuses_validated_responses_across_runs(monkeypatch, tmp_path):
     assert second_result["network_requests"] == 0
     assert len(calls) == 3
     assert second_result["accepted_detail_rows"] == 1
+
+
+def test_supervisor_resumes_after_rate_limit_pause(monkeypatch, tmp_path):
+    monkeypatch.setattr(paths, "DATA_ROOT", tmp_path / "data")
+    roots = paths.country_paths("ke")
+    roots.enriched.mkdir(parents=True)
+    results = iter([
+        {"status": "paused_rate_limit", "job_counts": {"pending": 2, "retryable_failed": 1}, "accepted_detail_rows": 4},
+        {"status": "complete", "job_counts": {"pending": 0, "retryable_failed": 0}, "accepted_detail_rows": 7},
+    ])
+    sleeps = []
+
+    def fake_execute(run, **kwargs):
+        return next(results)
+
+    config = engine.EngineConfig("test", "1", "1", ("/list",), "/detail/{id}", circuit_breaker_pause_seconds=12)
+    monkeypatch.setattr(engine, "load_config", lambda path=None: config)
+    result = engine.supervise("run", max_cycles=3, max_runtime_seconds=100, sleep=sleeps.append, clock=lambda: 0.0, execute_fn=fake_execute)
+
+    assert result["status"] == "complete"
+    assert len(result["cycles"]) == 2
+    assert sleeps == [12]
+    state = json.loads((roots.enriched / "run" / "supervisor.json").read_text())
+    assert state["phase"] == "complete"
+    assert state["cycle_count"] == 2

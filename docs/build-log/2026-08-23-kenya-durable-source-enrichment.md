@@ -13,9 +13,12 @@ pursuitmap source-enrich plan ke --limit 25
 pursuitmap source-enrich run ke --run-id <run-id>
 pursuitmap source-enrich resume ke --run-id <run-id>
 pursuitmap source-enrich report ke --run-id <run-id>
+pursuitmap source-enrich supervise ke --run-id <run-id>
 ```
 
 `enrich-source` remains a compatibility alias for a planned and executed run.
+
+The supervisor owns no DuckDB connection during cooldown. It invokes the existing runner, waits through the configured circuit-breaker pause, and resumes the same ledger. Each cycle and stop reason is stored in `supervisor.json`. The default bound is 100 cycles or 24 hours.
 
 ## Pilot evidence
 

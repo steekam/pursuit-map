@@ -648,6 +648,9 @@ def status(run: str, country: str = "ke") -> dict:
     progress = output_root / "progress.json"
     if progress.exists():
         value = json.loads(progress.read_text(encoding="utf-8"))
+        supervisor_path = output_root / "supervisor.json"
+        if supervisor_path.exists():
+            value["supervisor"] = json.loads(supervisor_path.read_text(encoding="utf-8"))
         updated = datetime.fromisoformat(value["updated_at"])
         age = max(0.0, (datetime.now(UTC) - updated).total_seconds())
         value["heartbeat_age_seconds"] = round(age, 1)
@@ -683,6 +686,85 @@ def status(run: str, country: str = "ke") -> dict:
 
 def resume(run: str, **kwargs) -> dict:
     return execute(run, **kwargs)
+
+
+def supervise(
+    run: str,
+    *,
+    country: str = "ke",
+    config_path: Path | None = None,
+    workers: int | None = None,
+    max_cycles: int = 100,
+    max_runtime_seconds: float = 24 * 60 * 60,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.time,
+    execute_fn: Callable[..., dict] = execute,
+) -> dict:
+    """Run resumable enrichment cycles until completion or an explicit bound.
+
+    Each cycle owns the ledger briefly, then releases it before the cooldown.
+    This keeps the supervisor out of DuckDB writes while it waits.
+    """
+    if max_cycles < 1:
+        raise ValueError("max_cycles must be positive")
+    roots = country_paths(country)
+    output_root = roots.enriched / run
+    output_root.mkdir(parents=True, exist_ok=True)
+    state_path = output_root / "supervisor.json"
+    config = load_config(config_path)
+    started = clock()
+    cycles: list[dict] = []
+
+    def write_state(phase: str, **extra: object) -> None:
+        state = {
+            "run_id": run,
+            "country": country,
+            "phase": phase,
+            "cycle_count": len(cycles),
+            "started_at_epoch": started,
+            "updated_at_epoch": clock(),
+            "max_cycles": max_cycles,
+            "max_runtime_seconds": max_runtime_seconds,
+            "cycles": cycles,
+            **extra,
+        }
+        state_path.write_text(json.dumps(state, indent=2, default=str) + "\n", encoding="utf-8")
+
+    write_state("starting")
+    while len(cycles) < max_cycles and clock() - started < max_runtime_seconds:
+        cycle_started = clock()
+        write_state("running")
+        result = execute_fn(run, country=country, config_path=config_path, workers=workers)
+        cycle = {
+            "cycle": len(cycles) + 1,
+            "started_at_epoch": cycle_started,
+            "finished_at_epoch": clock(),
+            "status": result.get("status"),
+            "job_counts": result.get("job_counts", {}),
+            "accepted_detail_rows": result.get("accepted_detail_rows", 0),
+            "rate_limit_events": result.get("rate_limit_events", 0),
+        }
+        cycles.append(cycle)
+        counts = result.get("job_counts", {})
+        pending = counts.get("pending", 0) + counts.get("retryable_failed", 0)
+        if result.get("status") == "complete" and pending == 0:
+            write_state("complete", last_result=result)
+            return {"run_id": run, "status": "complete", "cycles": cycles, "state_path": str(state_path), "last_result": result}
+        if result.get("status") not in {"paused_rate_limit", "paused_network"}:
+            write_state("stopped", stop_reason=f"unexpected_status:{result.get('status')}", last_result=result)
+            return {"run_id": run, "status": "stopped", "stop_reason": "unexpected_status", "cycles": cycles, "state_path": str(state_path), "last_result": result}
+        if pending == 0:
+            write_state("stopped", stop_reason="paused_without_pending_jobs", last_result=result)
+            return {"run_id": run, "status": "stopped", "stop_reason": "paused_without_pending_jobs", "cycles": cycles, "state_path": str(state_path), "last_result": result}
+        cooldown = config.circuit_breaker_pause_seconds if result["status"] == "paused_rate_limit" else max(30, config.circuit_breaker_pause_seconds)
+        if len(cycles) >= max_cycles or clock() - started >= max_runtime_seconds:
+            break
+        write_state("cooling_down", cooldown_seconds=cooldown, next_cycle_at_epoch=clock() + cooldown, last_result=result)
+        sleep(cooldown)
+
+    reason = "max_cycles" if len(cycles) >= max_cycles else "max_runtime"
+    write_state("stopped", stop_reason=reason, last_result=cycles[-1] if cycles else None)
+    return {"run_id": run, "status": "stopped", "stop_reason": reason, "cycles": cycles, "state_path": str(state_path)}
 
 
 def compatibility_enrich_source(country: str = "ke", *, limit: int = 25) -> dict:
