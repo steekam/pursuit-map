@@ -18,7 +18,7 @@ from .provenance import run_id, sha256_file, source_hash, utc_now
 
 DISCOVERY_VERSION = "kenya-mapping-discovery-1"
 LIST_ENDPOINTS = ("/api/active-tenders", "/api/closed-tenders")
-ARCHIVE_ENDPOINTS = ("/api/explore-contracts", "/api/get/all/published-contracts")
+ARCHIVE_ENDPOINTS = ("/api/explore-contracts", "/api/get/all/published-contracts", "/api/contract")
 DISCOVERY_SCHEMA = {
     "run_metadata": "run_id VARCHAR PRIMARY KEY, country VARCHAR, source_run_id VARCHAR, source_snapshot_sha256 VARCHAR, config_json VARCHAR, created_at VARCHAR, status VARCHAR, max_jobs INTEGER",
     "discovery_jobs": "job_id VARCHAR PRIMARY KEY, run_id VARCHAR, endpoint_family VARCHAR, endpoint VARCHAR, url VARCHAR, params_json VARCHAR, cohort_year INTEGER, filter_field VARCHAR, filter_value VARCHAR, status VARCHAR, attempts INTEGER, next_attempt_at DOUBLE, http_status INTEGER, error_class VARCHAR, error_message VARCHAR, response_hash VARCHAR, response_path VARCHAR, created_at VARCHAR, updated_at VARCHAR",
@@ -143,7 +143,10 @@ def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year
                         params[metadata_field] = metadata_value
                         jobs.append((endpoint, params, year, f"{date_field}+{metadata_field}", f"{value}|{metadata_value}"))
     for endpoint in ARCHIVE_ENDPOINTS:
-        jobs.append((endpoint, {"perpage": 100, "page": 1}, None, "archive_control", ""))
+        if endpoint == "/api/contract":
+            jobs.append((endpoint, {"search": "", "perpage": 100, "sortby": "", "order": "asc", "page": 1, "tender_ref": "", "title": "", "pe:name": ""}, None, "contract_archive", ""))
+        else:
+            jobs.append((endpoint, {"perpage": 100, "page": 1}, None, "archive_control", ""))
     jobs = jobs[:max_jobs]
     for endpoint, params, year, field, value in jobs:
         _insert_job(connection, run, "archive" if endpoint in ARCHIVE_ENDPOINTS else "list", endpoint, params, cohort_year=year, filter_field=field, filter_value=value)
@@ -186,8 +189,9 @@ def _process_mapping_rows(connection, run: str, job: tuple, payload: bytes, dige
     page = int(params.get("page", 1))
     inserted = 0
     for record in records:
-        external_id = record.get("id")
-        ocid = record.get("ocid")
+        tender = record.get("tender") if isinstance(record.get("tender"), dict) else record
+        external_id = tender.get("id")
+        ocid = tender.get("ocid")
         if external_id is None or not ocid:
             continue
         external_id = str(external_id)
@@ -196,7 +200,7 @@ def _process_mapping_rows(connection, run: str, job: tuple, payload: bytes, dige
         if existing:
             connection.execute("UPDATE discovery_mappings SET duplicate_count = duplicate_count + 1 WHERE mapping_key = ?", [key])
             continue
-        connection.execute("INSERT INTO discovery_mappings VALUES (nextval('discovery_mapping_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run, key, job[0], endpoint_family, endpoint, page, external_id, ocid, record.get("tender_ref"), ocid in canonical, ocid in canonical and ocid not in validated, 0, digest, utc_now()])
+        connection.execute("INSERT INTO discovery_mappings VALUES (nextval('discovery_mapping_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run, key, job[0], endpoint_family, endpoint, page, external_id, ocid, tender.get("tender_ref"), ocid in canonical, ocid in canonical and ocid not in validated, 0, digest, utc_now()])
         inserted += 1
     return inserted
 

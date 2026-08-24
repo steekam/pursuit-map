@@ -39,6 +39,13 @@ def test_extract_records_supports_known_shapes():
     assert discovery._extract_records(b'{"message":"unsupported"}')[1] == "unsupported"
 
 
+def test_contract_records_map_nested_tender():
+    records, _ = discovery._extract_records(b'{"data":[{"id":99,"tender":{"id":77,"ocid":"ocid-77","tender_ref":"T-77"}}]}')
+    tender = records[0]["tender"]
+    assert tender["id"] == 77
+    assert tender["ocid"] == "ocid-77"
+
+
 def test_gap_plan_is_bounded_and_list_only(monkeypatch, tmp_path):
     roots = _source_fixture(monkeypatch, tmp_path)
     result = discovery.plan("source-run", country="ke", from_year=2025, to_year=2025, max_jobs=7)
