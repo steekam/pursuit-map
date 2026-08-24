@@ -144,7 +144,7 @@ def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year
                         jobs.append((endpoint, params, year, f"{date_field}+{metadata_field}", f"{value}|{metadata_value}"))
     for endpoint in ARCHIVE_ENDPOINTS:
         if endpoint == "/api/contract":
-            jobs.append((endpoint, {"search": "", "perpage": 100, "sortby": "", "order": "asc", "page": 1, "tender_ref": "", "title": "", "pe:name": ""}, None, "contract_archive", ""))
+            jobs.append((endpoint, {"perpage": 100, "page": 1}, None, "contract_archive", ""))
         else:
             jobs.append((endpoint, {"perpage": 100, "page": 1}, None, "archive_control", ""))
     if contract_only:
