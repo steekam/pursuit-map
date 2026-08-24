@@ -420,7 +420,7 @@ def combine(child_run: str, *, country: str = "ke", baseline_run: str | None = N
             UNION ALL
             SELECT {column_sql}, ? AS source_run_id, ? AS parent_source_run_id FROM read_parquet(?)
         ), ranked AS (
-            SELECT *, row_number() OVER (PARTITION BY ocid ORDER BY source_run_id, job_id) AS rn FROM rows
+            SELECT *, row_number() OVER (PARTITION BY ocid ORDER BY source_run_id, external_record_id) AS rn FROM rows
         )
         SELECT * EXCLUDE (rn) FROM ranked WHERE rn = 1
     """
