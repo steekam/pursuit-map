@@ -111,6 +111,7 @@ def main() -> None:
     gap_plan_parser.add_argument("--from-year", type=int, default=2018)
     gap_plan_parser.add_argument("--to-year", type=int, default=2025)
     gap_plan_parser.add_argument("--max-jobs", type=int, default=250)
+    gap_plan_parser.add_argument("--contract-only", action="store_true")
     gap_run_parser = durable_subparsers.add_parser("gap-run")
     gap_run_parser.add_argument("country", choices=["ke"])
     gap_run_parser.add_argument("--run-id", required=True)
@@ -199,7 +200,7 @@ def main() -> None:
         elif args.source_enrich_action == "analyze":
             result = source_enrich_analyze(args.run_id, country=args.country)
         elif args.source_enrich_action == "gap-plan":
-            result = gap_plan(args.source_run_id, country=args.country, from_year=args.from_year, to_year=args.to_year, max_jobs=args.max_jobs)
+            result = gap_plan(args.source_run_id, country=args.country, from_year=args.from_year, to_year=args.to_year, max_jobs=args.max_jobs, contract_only=args.contract_only)
         elif args.source_enrich_action in {"gap-run", "gap-resume"}:
             result = gap_execute(args.run_id, country=args.country)
         elif args.source_enrich_action == "gap-report":

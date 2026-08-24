@@ -97,7 +97,7 @@ def _date_values(canonical: Path, pending: set[str], field: str, years: list[int
     return selected
 
 
-def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year: int = 2025, max_jobs: int = 250, config_path: Path | None = None) -> dict:
+def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year: int = 2025, max_jobs: int = 250, config_path: Path | None = None, contract_only: bool = False) -> dict:
     if country != "ke" or from_year > to_year:
         raise ValueError("country must be ke and from_year must be <= to_year")
     pending, validated, canonical, source_sha = _canonical_context(source_run, country)
@@ -147,6 +147,8 @@ def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year
             jobs.append((endpoint, {"search": "", "perpage": 100, "sortby": "", "order": "asc", "page": 1, "tender_ref": "", "title": "", "pe:name": ""}, None, "contract_archive", ""))
         else:
             jobs.append((endpoint, {"perpage": 100, "page": 1}, None, "archive_control", ""))
+    if contract_only:
+        jobs = [job for job in jobs if job[0] == "/api/contract"]
     jobs = jobs[:max_jobs]
     for endpoint, params, year, field, value in jobs:
         _insert_job(connection, run, "archive" if endpoint in ARCHIVE_ENDPOINTS else "list", endpoint, params, cohort_year=year, filter_field=field, filter_value=value)
