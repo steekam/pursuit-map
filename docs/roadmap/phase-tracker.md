@@ -69,8 +69,8 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 
 | Task | Status | Acceptance evidence |
 | --- | --- | --- |
-| Rename enrichment state `eligible` to `mapping_pending` (or `canonical_unmapped`) | queued | Schema, code, tests, reports, and existing Parquet outputs use the approved name; migration preserves row counts and provenance. |
-| Document the state transition rules for `mapping_pending`, `retry_later`, `validated_detail`, and `source_only` | queued | Domain note and fixture expectations explain each state and its next action. |
-| Reconcile and re-materialize the current Kenya eligibility output after the rename | queued | Before/after counts match; manifest and checksums are recorded. |
+| Rename enrichment state `eligible` to `mapping_pending` | complete | Code, tests, and current Parquet output use the approved name; row counts and provenance are preserved. |
+| Document the state transition rules for `mapping_pending`, `retry_later`, `validated_detail`, and `source_only` | in progress | Add the state definitions to the Kenya source notes. |
+| Reconcile and re-materialize the current Kenya eligibility output after the rename | in progress | Re-run materialization, then record before/after counts and checksums. |
 
 Every completed step should update this tracker and add a build-log entry. The tracker records project state; the build log records the reasoning and measurements behind state changes.

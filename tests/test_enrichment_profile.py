@@ -20,7 +20,7 @@ def test_interim_profile_reuses_same_materialization(monkeypatch, tmp_path):
     values = {column: "NULL::VARCHAR" for column in SCHEMA}
     values.update({"source_snapshot_sha256": "'sha'", "ocid": "'ocid-1'", "title": "'Title'", "attachments_json": "'[]'"})
     connection.execute(f"COPY (SELECT {','.join(f'{expression} AS {column}' for column, expression in values.items())}) TO ? (FORMAT PARQUET)", [str(run_root / "source_enrichment.parquet")])
-    connection.execute("COPY (SELECT 'validated_detail' AS state UNION ALL SELECT 'eligible') TO ? (FORMAT PARQUET)", [str(run_root / "enrichment_eligibility.parquet")])
+    connection.execute("COPY (SELECT 'validated_detail' AS state UNION ALL SELECT 'mapping_pending') TO ? (FORMAT PARQUET)", [str(run_root / "enrichment_eligibility.parquet")])
     connection.close()
 
     first = enrichment_profile.profile("run", country="ke")
@@ -29,6 +29,6 @@ def test_interim_profile_reuses_same_materialization(monkeypatch, tmp_path):
     assert first == second
     assert first["enriched_rows"] == 1
     assert first["canonical_ocids"] == 2
-    assert first["eligibility_states"] == {"eligible": 1, "validated_detail": 1}
+    assert first["eligibility_states"] == {"mapping_pending": 1, "validated_detail": 1}
     assert first["field_coverage"]["title"]["present"] == 1
     assert (run_root / "source_enrichment_interim_profile.md").exists()

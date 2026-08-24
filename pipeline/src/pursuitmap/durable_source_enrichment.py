@@ -436,7 +436,7 @@ def _cohort_coverage(connection, run: str) -> list[dict]:
 
 
 def _eligibility_rows(canonical_rows: list[tuple], mapping_rows: list[tuple], job_rows: list[tuple], *, run: str, source_sha: str, source_version: str, checked_at: str) -> list[tuple]:
-    """Build a reversible triage view. Unmapped records remain eligible; they are not dead."""
+    """Build a reversible triage view. Unmapped records remain mapping-pending."""
     mappings: dict[str, list[tuple]] = {}
     for row in mapping_rows:
         mappings.setdefault(row[1], []).append(row)
@@ -448,7 +448,7 @@ def _eligibility_rows(canonical_rows: list[tuple], mapping_rows: list[tuple], jo
             continue
         candidates = [row for row in mappings.get(ocid, []) if row[3]]
         if not candidates:
-            rows.append((run, source_sha, ocid, None, "eligible", "not_returned_by_current_list_pages", "recent" if release_date else "unknown", source_version, checked_at, None, None, None, release_date))
+            rows.append((run, source_sha, ocid, None, "mapping_pending", "not_returned_by_current_list_pages", "recent" if release_date else "unknown", source_version, checked_at, None, None, None, release_date))
             continue
         mapping_id, _, external_id, _, _, mapping_time = candidates[0]
         detail = next((job for job in jobs.values() if job[1] == external_id), None)

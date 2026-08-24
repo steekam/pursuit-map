@@ -67,6 +67,18 @@ The OCP registry reports these issues:
 
 The comparison supports a Kenya adapter experiment. Kenya is useful for tender, award, contract, and timing analysis. South Africa remains stronger for planning and document metadata. The sources should remain separate until canonical mapping and source-specific quality checks exist.
 
+## Enrichment state meanings
+
+The eligibility output has one row per canonical OCID.
+
+- `mapping_pending`: the current PPIP list responses did not return a verified PPIP ID for the OCID. The record needs a mapping investigation.
+- `retry_later`: a verified PPIP ID exists, but the detail request has a pending or retryable failure.
+- `validated_detail`: the detail response has HTTP status 200, valid JSON, a matching OCID, and a stored raw response.
+- `source_only`: PPIP returned a mapping that has no matching OCID in the canonical snapshot.
+- `permanent_skip`: the canonical record cannot enter the workflow because a required source key is missing.
+
+These states describe pipeline coverage. They do not describe procurement value, supplier quality, or commercial eligibility.
+
 Run the current raw-source report with:
 
 ```bash
