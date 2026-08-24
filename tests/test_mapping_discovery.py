@@ -60,3 +60,23 @@ def test_gap_execute_deduplicates_and_enqueues_next_page(monkeypatch, tmp_path):
     assert connection.execute("SELECT duplicate_count FROM discovery_mappings").fetchone()[0] == 1
     assert connection.execute("SELECT count(*) FROM discovery_jobs WHERE status = 'pending'").fetchone()[0] == 0
     connection.close()
+
+
+def test_promote_selects_one_mapping_per_ocid(monkeypatch, tmp_path):
+    roots = _source_fixture(monkeypatch, tmp_path)
+    discovery_run = "mapping-discovery-fixture"
+    output = roots.enriched / discovery_run
+    output.mkdir(parents=True)
+    connection = duckdb.connect(str(output / "ledger.duckdb"))
+    discovery._create_ledger(connection)
+    connection.execute("INSERT INTO run_metadata VALUES (?, ?, ?, ?, ?, ?, 'complete', ?)", [discovery_run, "ke", "source-run", "sha", "{}", "now", 250])
+    mapping_columns = "run_id, mapping_key, job_id, endpoint_family, endpoint, list_page, external_id, ocid, tender_ref, canonical_match, new_canonical_match, duplicate_count, response_hash, created_at"
+    connection.execute(f"INSERT INTO discovery_mappings ({mapping_columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [discovery_run, "key-1", "job-1", "list", "/api/closed-tenders", 1, "77", "ocid-pending", "T-7", True, True, 0, "hash", "now"])
+    connection.execute(f"INSERT INTO discovery_mappings ({mapping_columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [discovery_run, "key-2", "job-2", "list", "/api/active-tenders", 2, "88", "ocid-pending", "T-8", True, True, 0, "hash", "now"])
+    connection.close()
+    result = discovery.promote(discovery_run, country="ke", sample_per_cohort=100)
+    assert result["selected_mappings"] == 1
+    child = duckdb.connect(str(roots.enriched / result["run_id"] / "ledger.duckdb"), read_only=True)
+    assert child.execute("SELECT count(*) FROM request_jobs WHERE job_type = 'detail'").fetchone()[0] == 1
+    assert child.execute("SELECT expected_ocid, external_id FROM request_jobs").fetchone() == ("ocid-pending", "77")
+    child.close()

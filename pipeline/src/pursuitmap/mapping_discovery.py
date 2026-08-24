@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import time
 import urllib.parse
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Callable
 
 import duckdb
 
-from .durable_source_enrichment import BASE_URL, EngineConfig, _cache_connection, _cache_lookup, _cache_store, _fetch, classify_status, load_config
+from .durable_source_enrichment import BASE_URL, EngineConfig, RateLimiter, _cache_connection, _cache_lookup, _cache_store, _create_sequences, _fetch, _insert_job as _insert_detail_job, _now, _create_ledger as _create_detail_ledger, classify_status, execute as execute_detail, load_config
 from .paths import canonical_root, country_paths
 from .provenance import run_id, sha256_file, source_hash, utc_now
 
@@ -116,6 +117,8 @@ def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year
             jobs.append((endpoint, params, None, "perpage", str(perpage)))
         for field in ("tender_ref", "title", "pe:name", "procurementMethod:title", "procurementCategory:title", "addendum_added"):
             values = connection.execute(f"SELECT DISTINCT {('tender_number' if field == 'tender_ref' else 'title' if field == 'title' else 'procuring_entity_name' if field == 'pe:name' else 'procurement_method' if field == 'procurementMethod:title' else 'procurement_category' if field == 'procurementCategory:title' else 'published_date_raw')} FROM read_parquet(?) WHERE {('tender_number' if field == 'tender_ref' else 'title' if field == 'title' else 'procuring_entity_name' if field == 'pe:name' else 'procurement_method' if field == 'procurementMethod:title' else 'procurement_category' if field == 'procurementCategory:title' else 'published_date_raw')} IS NOT NULL ORDER BY 1 LIMIT 1", [str(roots.enriched / source_run / "source_enrichment.parquet")]).fetchone()
+            if field == "addendum_added":
+                values = ("1",)
             if values and values[0]:
                 params = _base_params(100)
                 params[field] = values[0]
@@ -200,7 +203,7 @@ def _enqueue_next_page(connection, job: tuple, payload: bytes, max_jobs: int) ->
     _insert_job(connection, job[1], job[2], job[3], next_params, cohort_year=job[6], filter_field=job[7], filter_value=job[8])
 
 
-def execute(run: str, *, country: str = "ke", config_path: Path | None = None, sleep: Callable[[float], None] = __import__("time").sleep, randomizer: Callable[[], float] = random.random) -> dict:
+def execute(run: str, *, country: str = "ke", config_path: Path | None = None, sleep: Callable[[float], None] = time.sleep, randomizer: Callable[[], float] = random.random) -> dict:
     roots = country_paths(country)
     output_root = roots.enriched / run
     connection = duckdb.connect(str(output_root / "ledger.duckdb"))
@@ -215,15 +218,14 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     cache = _cache_connection(roots)
     response_root = output_root / "responses"
     response_root.mkdir(exist_ok=True)
-    limiter = __import__("pursuitmap.durable_source_enrichment", fromlist=["RateLimiter"]).RateLimiter(config.refill_rate_per_second, config.jitter_seconds, sleeper=sleep, randomizer=randomizer)
-    paused = False
+    limiter = RateLimiter(config.refill_rate_per_second, config.jitter_seconds, sleeper=sleep, randomizer=randomizer)
     while True:
-        job = connection.execute("SELECT * FROM discovery_jobs WHERE run_id = ? AND status IN ('pending','retryable_failed') AND next_attempt_at <= ? ORDER BY created_at, job_id LIMIT 1", [run, __import__("pursuitmap.durable_source_enrichment", fromlist=["_now"])._now()]).fetchone()
+        job = connection.execute("SELECT * FROM discovery_jobs WHERE run_id = ? AND status IN ('pending','retryable_failed') AND next_attempt_at <= ? ORDER BY created_at, job_id LIMIT 1", [run, _now()]).fetchone()
         if not job:
             next_ready = connection.execute("SELECT min(next_attempt_at) FROM discovery_jobs WHERE run_id = ? AND status IN ('pending','retryable_failed')", [run]).fetchone()[0]
             if next_ready is None:
                 break
-            sleep(max(0.0, next_ready - __import__("pursuitmap.durable_source_enrichment", fromlist=["_now"])._now()))
+            sleep(max(0.0, next_ready - _now()))
             continue
         job_id, _, endpoint_family, endpoint, url, params_json, *_ = job
         attempts = job[10] + 1
@@ -254,7 +256,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
             retryable, error_class = classify_status(status, None, config.retry_statuses)
             if retryable and attempts < config.max_attempts:
                 delay = min(config.max_backoff_seconds, 2 ** attempts) + randomizer() * config.jitter_seconds
-                connection.execute("UPDATE discovery_jobs SET status='retryable_failed', next_attempt_at=?, http_status=?, error_class=?, error_message=?, response_hash=?, response_path=?, updated_at=? WHERE job_id=?", [__import__("pursuitmap.durable_source_enrichment", fromlist=["_now"])._now() + delay, status, error_class, "retryable HTTP response", digest, path, utc_now(), job_id])
+                connection.execute("UPDATE discovery_jobs SET status='retryable_failed', next_attempt_at=?, http_status=?, error_class=?, error_message=?, response_hash=?, response_path=?, updated_at=? WHERE job_id=?", [_now() + delay, status, error_class, "retryable HTTP response", digest, path, utc_now(), job_id])
                 _record_event(connection, job_id, attempts, "retryable_failed", wait, status, True, error_class, "retryable HTTP response", digest)
                 continue
             connection.execute("UPDATE discovery_jobs SET status='permanent_failed', http_status=?, error_class=?, error_message=?, response_hash=?, response_path=?, updated_at=? WHERE job_id=?", [status, error_class, "permanent HTTP response", digest, path, utc_now(), job_id])
@@ -262,7 +264,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
         except Exception as error:
             retryable, error_class = classify_status(None, error, config.retry_statuses)
             state = "retryable_failed" if retryable and attempts < config.max_attempts else "permanent_failed"
-            next_at = __import__("pursuitmap.durable_source_enrichment", fromlist=["_now"])._now() + min(config.max_backoff_seconds, 2 ** attempts)
+            next_at = _now() + min(config.max_backoff_seconds, 2 ** attempts)
             connection.execute("UPDATE discovery_jobs SET status=?, next_attempt_at=?, error_class=?, error_message=?, updated_at=? WHERE job_id=?", [state, next_at, error_class, str(error), utc_now(), job_id])
             _record_event(connection, job_id, attempts, state, wait, None, state == "retryable_failed", error_class, str(error), None)
     counts = {row[0]: row[1] for row in connection.execute("SELECT status,count(*) FROM discovery_jobs WHERE run_id=? GROUP BY status", [run]).fetchall()}
@@ -319,3 +321,70 @@ def report(run: str, *, country: str = "ke") -> dict:
     lines.extend(["", "Detail validation is a separate promotion stage. This report does not accept candidate mappings as validated enrichment.", ""])
     (output_root / "mapping_discovery_report.md").write_text("\n".join(lines), encoding="utf-8")
     return value
+
+
+def _validated_ocids(roots, source_run: str) -> set[str]:
+    paths = {roots.enriched / source_run / "source_enrichment.parquet"}
+    paths.update(roots.enriched.glob("*/source_enrichment.parquet"))
+    values: set[str] = set()
+    connection = duckdb.connect()
+    for path in sorted(path for path in paths if path.exists()):
+        values.update(row[0] for row in connection.execute("SELECT DISTINCT ocid FROM read_parquet(?) WHERE ocid IS NOT NULL", [str(path)]).fetchall())
+    connection.close()
+    return values
+
+
+def promote(discovery_run: str, *, country: str = "ke", sample_per_cohort: int = 100, all_mappings: bool = False, config_path: Path | None = None) -> dict:
+    """Create an immutable child detail run from newly discovered mappings."""
+    if country != "ke" or sample_per_cohort < 1:
+        raise ValueError("country must be ke and sample_per_cohort must be positive")
+    roots = country_paths(country)
+    discovery_root = roots.enriched / discovery_run
+    connection = duckdb.connect(str(discovery_root / "ledger.duckdb"), read_only=True)
+    metadata = connection.execute("SELECT source_run_id, source_snapshot_sha256 FROM run_metadata WHERE run_id = ?", [discovery_run]).fetchone()
+    if not metadata:
+        raise FileNotFoundError(f"Discovery run not found: {discovery_run}")
+    source_run, source_sha = metadata
+    canonical = canonical_root(country)
+    existing = _validated_ocids(roots, source_run)
+    rows = connection.execute("""
+        SELECT mapping_id, endpoint, list_page, response_hash, external_id, ocid, tender_ref
+        FROM discovery_mappings
+        WHERE run_id = ? AND new_canonical_match
+        ORDER BY mapping_id
+    """, [discovery_run]).fetchall()
+    release_month = dict(connection.execute("SELECT ocid, coalesce(strftime(try_cast(release_date AS DATE), '%Y-%m'), 'unknown') FROM read_parquet(?)", [str(canonical / "releases.parquet")]).fetchall())
+    connection.close()
+    by_ocid: dict[str, tuple] = {}
+    for row in rows:
+        if row[5] in existing:
+            continue
+        current = by_ocid.get(row[5])
+        if current is None or (str(row[4]), str(row[0])) < (str(current[4]), str(current[0])):
+            by_ocid[row[5]] = row
+    candidates = sorted(by_ocid.values(), key=lambda row: (release_month.get(row[5], "unknown"), hashlib.sha256(row[5].encode()).hexdigest(), row[5]))
+    if not all_mappings:
+        selected: list[tuple] = []
+        counts: dict[str, int] = {}
+        for row in candidates:
+            cohort = release_month.get(row[5], "unknown")
+            if counts.get(cohort, 0) >= sample_per_cohort:
+                continue
+            selected.append(row)
+            counts[cohort] = counts.get(cohort, 0) + 1
+        candidates = selected
+    config = load_config(config_path)
+    child_run = run_id(source_sha, "source-enrich-promotion")
+    output_root = roots.enriched / child_run
+    output_root.mkdir(parents=True, exist_ok=True)
+    ledger = duckdb.connect(str(output_root / "ledger.duckdb"))
+    _create_detail_ledger(ledger)
+    _create_sequences(ledger)
+    ledger.execute("INSERT INTO run_metadata (run_id, country, source_snapshot_sha256, config_json, created_at, status, detail_limit, resume_count) VALUES (?, ?, ?, ?, ?, 'planned', ?, 0)", [child_run, country, source_sha, json.dumps({"promotion_parent": discovery_run, "source_run_id": source_run, "sample_per_cohort": None if all_mappings else sample_per_cohort, "all_mappings": all_mappings, "version": DISCOVERY_VERSION, "config": config.__dict__}), utc_now(), len(candidates)])
+    for mapping_id, endpoint, page, response_hash, external_id, ocid, tender_ref in candidates:
+        ledger.execute("INSERT INTO source_mappings VALUES (nextval('mapping_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?)", [child_run, endpoint, page, response_hash, external_id, ocid, tender_ref, True, utc_now()])
+        _insert_detail_job(ledger, child_run, "detail", config.detail_endpoint, BASE_URL + config.detail_endpoint.format(id=external_id), {}, ocid, external_id)
+    ledger.close()
+    result = {"discovery_run_id": discovery_run, "parent_source_run_id": source_run, "run_id": child_run, "status": "planned", "candidate_mappings": len(rows), "selected_mappings": len(candidates), "sample_per_cohort": None if all_mappings else sample_per_cohort, "all_mappings": all_mappings, "output_root": str(output_root)}
+    (output_root / "promotion_plan.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return result

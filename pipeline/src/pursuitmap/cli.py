@@ -29,6 +29,7 @@ from .source_enrichment_benchmark import benchmark as source_enrich_benchmark
 from .mapping_discovery import execute as gap_execute
 from .mapping_discovery import plan as gap_plan
 from .mapping_discovery import report as gap_report
+from .mapping_discovery import promote as gap_promote
 from .enrichment_profile import profile as source_enrich_profile
 from .enrichment_analysis import analyze as source_enrich_analyze
 
@@ -118,6 +119,11 @@ def main() -> None:
     gap_report_parser = durable_subparsers.add_parser("gap-report")
     gap_report_parser.add_argument("country", choices=["ke"])
     gap_report_parser.add_argument("--run-id", required=True)
+    promote_parser = durable_subparsers.add_parser("promote")
+    promote_parser.add_argument("country", choices=["ke"])
+    promote_parser.add_argument("--discovery-run-id", required=True)
+    promote_parser.add_argument("--sample-per-cohort", type=int, default=100)
+    promote_parser.add_argument("--all", dest="all_mappings", action="store_true")
 
     materialize_parser = commands.add_parser("materialize")
     materialize_parser.add_argument("country", choices=["za"])
@@ -192,6 +198,8 @@ def main() -> None:
             result = gap_execute(args.run_id, country=args.country)
         elif args.source_enrich_action == "gap-report":
             result = gap_report(args.run_id, country=args.country)
+        elif args.source_enrich_action == "promote":
+            result = gap_promote(args.discovery_run_id, country=args.country, sample_per_cohort=args.sample_per_cohort, all_mappings=args.all_mappings)
         else:
             result = source_enrich_report(args.run_id, country=args.country)
     elif args.command in {"report", "profile"}:
