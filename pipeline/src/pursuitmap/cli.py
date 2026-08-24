@@ -26,6 +26,9 @@ from .document_download import plan as document_plan
 from .document_download import run as document_run
 from .document_features import extract_features, report as document_feature_report
 from .source_enrichment_benchmark import benchmark as source_enrich_benchmark
+from .mapping_discovery import execute as gap_execute
+from .mapping_discovery import plan as gap_plan
+from .mapping_discovery import report as gap_report
 from .enrichment_profile import profile as source_enrich_profile
 from .enrichment_analysis import analyze as source_enrich_analyze
 
@@ -100,6 +103,21 @@ def main() -> None:
     durable_benchmark.add_argument("--sample-per-level", type=int, default=20)
     durable_benchmark.add_argument("--rates", type=float, nargs="+", default=[2.0, 3.0])
     durable_benchmark.add_argument("--workers", type=int, nargs="+", default=[2, 3])
+    gap_plan_parser = durable_subparsers.add_parser("gap-plan")
+    gap_plan_parser.add_argument("country", choices=["ke"])
+    gap_plan_parser.add_argument("--source-run-id", required=True)
+    gap_plan_parser.add_argument("--from-year", type=int, default=2018)
+    gap_plan_parser.add_argument("--to-year", type=int, default=2025)
+    gap_plan_parser.add_argument("--max-jobs", type=int, default=250)
+    gap_run_parser = durable_subparsers.add_parser("gap-run")
+    gap_run_parser.add_argument("country", choices=["ke"])
+    gap_run_parser.add_argument("--run-id", required=True)
+    gap_resume_parser = durable_subparsers.add_parser("gap-resume")
+    gap_resume_parser.add_argument("country", choices=["ke"])
+    gap_resume_parser.add_argument("--run-id", required=True)
+    gap_report_parser = durable_subparsers.add_parser("gap-report")
+    gap_report_parser.add_argument("country", choices=["ke"])
+    gap_report_parser.add_argument("--run-id", required=True)
 
     materialize_parser = commands.add_parser("materialize")
     materialize_parser.add_argument("country", choices=["za"])
@@ -168,6 +186,12 @@ def main() -> None:
             result = source_enrich_retry_failed(args.run_id, country=args.country, job_type=args.job_type)
         elif args.source_enrich_action == "analyze":
             result = source_enrich_analyze(args.run_id, country=args.country)
+        elif args.source_enrich_action == "gap-plan":
+            result = gap_plan(args.source_run_id, country=args.country, from_year=args.from_year, to_year=args.to_year, max_jobs=args.max_jobs)
+        elif args.source_enrich_action in {"gap-run", "gap-resume"}:
+            result = gap_execute(args.run_id, country=args.country)
+        elif args.source_enrich_action == "gap-report":
+            result = gap_report(args.run_id, country=args.country)
         else:
             result = source_enrich_report(args.run_id, country=args.country)
     elif args.command in {"report", "profile"}:
