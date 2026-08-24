@@ -282,7 +282,7 @@ def report(run: str, *, country: str = "ke") -> dict:
     ledger_path = output_root / "ledger.duckdb"
     if not ledger_path.exists():
         raise FileNotFoundError(f"Discovery run not found: {run}")
-    connection = duckdb.connect(str(ledger_path), read_only=True)
+    connection = duckdb.connect(str(ledger_path))
     metadata = connection.execute("SELECT source_run_id, source_snapshot_sha256, status, max_jobs FROM run_metadata WHERE run_id=?", [run]).fetchone()
     if not metadata:
         raise FileNotFoundError(f"Discovery run not found: {run}")
