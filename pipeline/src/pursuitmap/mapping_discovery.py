@@ -112,6 +112,7 @@ def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year
     jobs: list[tuple] = []
     years = list(range(from_year, to_year + 1)) + [2026]
     for endpoint in LIST_ENDPOINTS:
+        metadata_values: dict[str, str] = {}
         for perpage in (100, 1000, 5000):
             params = _base_params(perpage)
             jobs.append((endpoint, params, None, "perpage", str(perpage)))
@@ -122,6 +123,7 @@ def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year
             if values and values[0]:
                 params = _base_params(100)
                 params[field] = values[0]
+                metadata_values[field] = str(values[0])
                 jobs.append((endpoint, params, None, field, str(values[0])))
         for field in ("published_at", "close_at"):
             for year, values in _date_values(canonical, pending, field, years).items():
@@ -129,6 +131,17 @@ def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year
                     params = _base_params(100)
                     params[field] = value
                     jobs.append((endpoint, params, year, field, value))
+        for date_field in ("published_at", "close_at"):
+            for year, values in _date_values(canonical, pending, date_field, years).items():
+                for value in values:
+                    for metadata_field in ("tender_ref", "title", "pe:name", "procurementMethod:title", "procurementCategory:title"):
+                        metadata_value = metadata_values.get(metadata_field)
+                        if not metadata_value:
+                            continue
+                        params = _base_params(100)
+                        params[date_field] = value
+                        params[metadata_field] = metadata_value
+                        jobs.append((endpoint, params, year, f"{date_field}+{metadata_field}", f"{value}|{metadata_value}"))
     for endpoint in ARCHIVE_ENDPOINTS:
         jobs.append((endpoint, {"perpage": 100, "page": 1}, None, "archive_control", ""))
     jobs = jobs[:max_jobs]
