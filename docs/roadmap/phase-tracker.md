@@ -17,7 +17,8 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 | --- | --- | --- | --- |
 | Phase 0 — domain and source understanding | complete | [domain glossary](../domain/glossary.md), [South Africa OCDS notes](../domain/south-africa-ocds.md), [ADR-001](../architecture/adr-001-local-first-foundation.md) | Keep South Africa as the baseline source for this milestone. |
 | Kenya source comparison | complete | [Kenya PPIP source notes](../domain/kenya-ppip.md), [comparison build log](../build-log/2026-08-23-kenya-source-comparison.md), [normalization benchmark](../build-log/2026-08-23-kenya-normalization-benchmark.md), [adapter build log](../build-log/2026-08-23-kenya-vectorized-adapter.md) | Decide which source enrichments justify the next pipeline stage. |
-| Kenya PPIP source enrichment | complete with warning | Fresh run `source-enrich-20260824T134223819613Z-5501335abfb5`, [quality report](../../data/enriched/kenya/source-enrich-20260824T134223819613Z-5501335abfb5/source_enrichment_quality_report.json), [mapping-gap report](../../data/enriched/kenya/source-enrich-20260824T134223819613Z-5501335abfb5/source_mapping_gap_report.json) | Decide whether the mapping gaps justify further API investigation. |
+| Kenya PPIP source enrichment | complete with warning | Fresh run `source-enrich-20260824T134223819613Z-5501335abfb5`, [quality report](../../data/enriched/kenya/source-enrich-20260824T134223819613Z-5501335abfb5/source_enrichment_quality_report.json), [mapping-gap report](../../data/enriched/kenya/source-enrich-20260824T134223819613Z-5501335abfb5/source_mapping_gap_report.json) | Historical recovery is a separate immutable run. |
+| Kenya historical mapping recovery | in progress | Discovery pilot `mapping-discovery-20260824T162056291465Z-5501335abfb5`; promotion child `source-enrich-promotion-20260824T164142190128Z-5501335abfb5` | Resume the detail sample after the visible rate-limit pause. |
 | Phase 1 — reproducible data foundation | complete | [canonical schema](../domain/canonical-schema.md), [quality report](../build-log/2026-08-23-phase-0-1-foundation.md), commits `78af6cb`, `183c975` | Whether document acquisition or entity review has higher value. |
 | Phase 1 — descriptive analytics | complete | [descriptive SQL](../../analytics/queries/phase1_descriptive.sql), materialized marts, commit `4759e71` | Which explorer views deserve a product surface. |
 | Phase 1.5 — deterministic retrieval lab | in progress | [ICT taxonomy](../../config/verticals/ict.json), [construction taxonomy](../../config/verticals/construction.json), [healthcare taxonomy](../../config/verticals/healthcare.json), [vertical comparison](../build-log/2026-08-23-vertical-comparison.md) | Build a reviewed challenge set before making accuracy claims. |
@@ -56,6 +57,8 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 - Kenya has 0 documents, 0 planning objects, 0 plan items, and 0 tender amounts in the canonical snapshot.
 - Kenya quality flags are materialized in a source-preserving enrichment table with rule version `kenya-quality-1`.
 - Kenya PPIP source enrichment has a durable DuckDB ledger and passed the first 25-limit pilot with 100% detail OCID validation.
+- The bounded historical discovery pilot captured 247 successful and 3 timed-out probes. It found 3,113 new canonical matches from 18,784 candidate mappings.
+- Historical promotion uses a child ledger. The first child sample has 87 validated detail rows and 3 HTTP 429 responses. Pending jobs remain resumable.
 - Entity merging, prediction, lead scoring, API, and browser UI are not implemented.
 
 ## Immediate next work
@@ -65,7 +68,8 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 3. Measure field-level agreement and evidence completeness. Do not call the result precision, recall, or commercial accuracy beyond this reviewed sample.
 4. Create a small reviewed retrieval challenge set from fixtures and current-source candidates.
 5. Compare title-only, title-plus-description, category, and full-metadata retrieval against the set.
-6. Review the completed Kenya quality and mapping-gap reports before document acquisition.
+6. Resume the historical promotion child run. Promote all remaining discovered mappings only after the sample passes its OCID and raw-response gates.
+7. Review the completed Kenya quality and mapping-gap reports before document acquisition.
 
 ## Queued cleanup tasks
 
