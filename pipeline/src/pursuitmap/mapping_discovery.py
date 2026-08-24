@@ -144,7 +144,7 @@ def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year
                         jobs.append((endpoint, params, year, f"{date_field}+{metadata_field}", f"{value}|{metadata_value}"))
     for endpoint in ARCHIVE_ENDPOINTS:
         if endpoint == "/api/contract":
-            jobs.append((endpoint, {"perpage": 100, "page": 1}, None, "contract_archive", ""))
+            jobs.append((endpoint, {"perpage": 50, "page": 1}, None, "contract_archive", ""))
         else:
             jobs.append((endpoint, {"perpage": 100, "page": 1}, None, "archive_control", ""))
     if contract_only:
@@ -183,13 +183,15 @@ def _record_event(connection, job_id: str, attempt: int, state: str, wait: float
     connection.execute("INSERT INTO discovery_events VALUES (nextval('discovery_event_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [job_id, attempt, state, wait, status, retryable, error_class, message, digest, utc_now()])
 
 
-def _process_mapping_rows(connection, run: str, job: tuple, payload: bytes, digest: str, canonical: set[str], validated: set[str]) -> int:
+def _process_mapping_rows(connection, run: str, job: tuple, payload: bytes, digest: str, canonical: set[str], validated: set[str], seen_keys: set[str] | None = None) -> int:
     records, _ = _extract_records(payload)
     endpoint_family = job[2]
     endpoint = job[3]
     params = json.loads(job[5])
     page = int(params.get("page", 1))
     inserted = 0
+    duplicate_counts: dict[str, int] = {}
+    seen_keys = seen_keys if seen_keys is not None else set()
     for record in records:
         tender = record.get("tender") if isinstance(record.get("tender"), dict) else record
         external_id = tender.get("id")
@@ -198,12 +200,14 @@ def _process_mapping_rows(connection, run: str, job: tuple, payload: bytes, dige
             continue
         external_id = str(external_id)
         key = _sha(f"{ocid}|{external_id}")
-        existing = connection.execute("SELECT mapping_id FROM discovery_mappings WHERE mapping_key = ?", [key]).fetchone()
-        if existing:
-            connection.execute("UPDATE discovery_mappings SET duplicate_count = duplicate_count + 1 WHERE mapping_key = ?", [key])
+        if key in seen_keys:
+            duplicate_counts[key] = duplicate_counts.get(key, 0) + 1
             continue
         connection.execute("INSERT INTO discovery_mappings VALUES (nextval('discovery_mapping_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run, key, job[0], endpoint_family, endpoint, page, external_id, ocid, tender.get("tender_ref"), ocid in canonical, ocid in canonical and ocid not in validated, 0, digest, utc_now()])
         inserted += 1
+        seen_keys.add(key)
+    for key, count in duplicate_counts.items():
+        connection.execute("UPDATE discovery_mappings SET duplicate_count = duplicate_count + ? WHERE mapping_key = ?", [count, key])
     return inserted
 
 
@@ -234,6 +238,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     connection.execute("UPDATE discovery_jobs SET status='retryable_failed', attempts=0, next_attempt_at=0, error_message=NULL, updated_at=? WHERE run_id=? AND status='permanent_failed' AND error_class IN ('TimeoutError', 'http_408', 'http_425', 'http_429', 'http_500', 'http_502', 'http_503', 'http_504')", [utc_now(), run])
     _, validated, canonical_root_path, _ = _canonical_context(source_run, country)
     canonical = set(row[0] for row in connection.execute("SELECT ocid FROM read_parquet(?) WHERE ocid IS NOT NULL", [str(canonical_root_path / "releases.parquet")]).fetchall())
+    seen_mapping_keys = set(row[0] for row in connection.execute("SELECT mapping_key FROM discovery_mappings WHERE run_id = ?", [run]).fetchall())
     config: EngineConfig = load_config(config_path)
     cache = _cache_connection(roots)
     response_root = output_root / "responses"
@@ -267,7 +272,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
             if status == 200:
                 records, shape = _extract_records(payload)
                 connection.execute("INSERT INTO discovery_capabilities VALUES (nextval('discovery_capability_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run, endpoint_family, endpoint, job[7], job[8], "supported" if shape != "unsupported" else "unsupported_shape", len(records), digest, utc_now(), shape])
-                _process_mapping_rows(connection, run, job, payload, digest, canonical, validated)
+                _process_mapping_rows(connection, run, job, payload, digest, canonical, validated, seen_mapping_keys)
                 _enqueue_next_page(connection, job, payload, max_jobs)
                 connection.execute("UPDATE discovery_jobs SET status='succeeded', http_status=200, response_hash=?, response_path=?, updated_at=? WHERE job_id=?", [digest, path, utc_now(), job_id])
                 _record_event(connection, job_id, attempts, "succeeded", wait, status, False, None, None, digest)
