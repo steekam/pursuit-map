@@ -293,8 +293,11 @@ def report(run: str, *, country: str = "ke") -> dict:
     duplicate_rows = connection.execute("SELECT coalesce(sum(duplicate_count),0) FROM discovery_mappings WHERE run_id=?", [run]).fetchone()[0]
     capability_rows = connection.execute("SELECT endpoint_family,endpoint,parameter_name,parameter_value,status,record_count,notes FROM discovery_capabilities WHERE run_id=? ORDER BY endpoint,parameter_name", [run]).fetchall()
     errors = {str(row[0]): row[1] for row in connection.execute("SELECT error_class,count(*) FROM discovery_jobs WHERE run_id=? AND error_class IS NOT NULL GROUP BY error_class ORDER BY error_class", [run]).fetchall()}
-    connection.execute("COPY (SELECT * FROM discovery_mappings WHERE run_id = ?) TO ? (FORMAT PARQUET, COMPRESSION ZSTD)", [run, str(output_root / "mapping_discovery_mappings.parquet")])
-    connection.execute("COPY (SELECT * FROM discovery_capabilities WHERE run_id = ?) TO ? (FORMAT PARQUET, COMPRESSION ZSTD)", [run, str(output_root / "mapping_discovery_capabilities.parquet")])
+    safe_run = run.replace("'", "''")
+    mappings_path = str(output_root / "mapping_discovery_mappings.parquet").replace("'", "''")
+    capabilities_path = str(output_root / "mapping_discovery_capabilities.parquet").replace("'", "''")
+    connection.execute(f"COPY (SELECT * FROM discovery_mappings WHERE run_id = '{safe_run}') TO '{mappings_path}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+    connection.execute(f"COPY (SELECT * FROM discovery_capabilities WHERE run_id = '{safe_run}') TO '{capabilities_path}' (FORMAT PARQUET, COMPRESSION ZSTD)")
     connection.close()
     value = {
         "run_id": run,
