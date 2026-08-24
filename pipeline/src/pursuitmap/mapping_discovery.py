@@ -389,3 +389,47 @@ def promote(discovery_run: str, *, country: str = "ke", sample_per_cohort: int =
     result = {"discovery_run_id": discovery_run, "parent_source_run_id": source_run, "run_id": child_run, "status": "planned", "candidate_mappings": len(rows), "selected_mappings": len(candidates), "sample_per_cohort": None if all_mappings else sample_per_cohort, "all_mappings": all_mappings, "output_root": str(output_root)}
     (output_root / "promotion_plan.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return result
+
+
+def combine(child_run: str, *, country: str = "ke", baseline_run: str | None = None) -> dict:
+    """Materialize a new deduplicated view from validated baseline and child rows."""
+    roots = country_paths(country)
+    child_root = roots.enriched / child_run
+    child_ledger = child_root / "ledger.duckdb"
+    connection = duckdb.connect(str(child_ledger), read_only=True)
+    metadata = connection.execute("SELECT source_snapshot_sha256, config_json FROM run_metadata WHERE run_id = ?", [child_run]).fetchone()
+    if not metadata:
+        raise FileNotFoundError(f"Promotion run not found: {child_run}")
+    source_sha, config_json = metadata
+    config = json.loads(config_json)
+    baseline_run = baseline_run or config.get("source_run_id")
+    if not baseline_run:
+        raise ValueError("The child run does not record a baseline source run")
+    baseline = roots.enriched / baseline_run / "source_enrichment.parquet"
+    child = child_root / "source_enrichment.parquet"
+    if not baseline.exists() or not child.exists():
+        raise FileNotFoundError("Baseline and completed child materializations are required")
+    combined_run = run_id(source_sha, "source-enrich-combined")
+    output_root = roots.enriched / combined_run
+    output_root.mkdir(parents=True, exist_ok=True)
+    columns = [row[0] for row in connection.execute("DESCRIBE SELECT * FROM read_parquet(?)", [str(baseline)]).fetchall()]
+    column_sql = ", ".join(f'"{column}"' for column in columns)
+    query = f"""
+        WITH rows AS (
+            SELECT {column_sql}, ? AS source_run_id, ? AS parent_source_run_id FROM read_parquet(?)
+            UNION ALL
+            SELECT {column_sql}, ? AS source_run_id, ? AS parent_source_run_id FROM read_parquet(?)
+        ), ranked AS (
+            SELECT *, row_number() OVER (PARTITION BY ocid ORDER BY source_run_id, job_id) AS rn FROM rows
+        )
+        SELECT * EXCLUDE (rn) FROM ranked WHERE rn = 1
+    """
+    connection.execute("CREATE OR REPLACE TABLE combined AS " + query, [baseline_run, baseline_run, str(baseline), child_run, baseline_run, str(child)])
+    combined_path = output_root / "source_enrichment_combined.parquet"
+    connection.execute("COPY combined TO ? (FORMAT PARQUET, COMPRESSION ZSTD)", [str(combined_path)])
+    connection.execute("COPY (SELECT ocid, source_run_id, parent_source_run_id, source_content_sha256, raw_response_path, external_record_id FROM combined) TO ? (FORMAT PARQUET, COMPRESSION ZSTD)", [str(output_root / "source_enrichment_provenance.parquet")])
+    rows = connection.execute("SELECT count(*), count(DISTINCT ocid) FROM combined").fetchone()
+    connection.close()
+    result = {"run_id": combined_run, "baseline_run_id": baseline_run, "child_run_id": child_run, "source_snapshot_sha256": source_sha, "rows": rows[0], "unique_ocids": rows[1], "output_root": str(output_root), "status": "complete"}
+    (output_root / "combined_manifest.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return result

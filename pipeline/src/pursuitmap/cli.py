@@ -30,6 +30,7 @@ from .mapping_discovery import execute as gap_execute
 from .mapping_discovery import plan as gap_plan
 from .mapping_discovery import report as gap_report
 from .mapping_discovery import promote as gap_promote
+from .mapping_discovery import combine as gap_combine
 from .enrichment_profile import profile as source_enrich_profile
 from .enrichment_analysis import analyze as source_enrich_analyze
 
@@ -124,6 +125,10 @@ def main() -> None:
     promote_parser.add_argument("--discovery-run-id", required=True)
     promote_parser.add_argument("--sample-per-cohort", type=int, default=100)
     promote_parser.add_argument("--all", dest="all_mappings", action="store_true")
+    combine_parser = durable_subparsers.add_parser("combine")
+    combine_parser.add_argument("country", choices=["ke"])
+    combine_parser.add_argument("--child-run-id", required=True)
+    combine_parser.add_argument("--baseline-run-id")
 
     materialize_parser = commands.add_parser("materialize")
     materialize_parser.add_argument("country", choices=["za"])
@@ -200,6 +205,8 @@ def main() -> None:
             result = gap_report(args.run_id, country=args.country)
         elif args.source_enrich_action == "promote":
             result = gap_promote(args.discovery_run_id, country=args.country, sample_per_cohort=args.sample_per_cohort, all_mappings=args.all_mappings)
+        elif args.source_enrich_action == "combine":
+            result = gap_combine(args.child_run_id, country=args.country, baseline_run=args.baseline_run_id)
         else:
             result = source_enrich_report(args.run_id, country=args.country)
     elif args.command in {"report", "profile"}:
