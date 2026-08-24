@@ -129,6 +129,7 @@ def main() -> None:
     combine_parser.add_argument("country", choices=["ke"])
     combine_parser.add_argument("--child-run-id", required=True)
     combine_parser.add_argument("--baseline-run-id")
+    combine_parser.add_argument("--additional-child-run-id", action="append", default=[])
 
     materialize_parser = commands.add_parser("materialize")
     materialize_parser.add_argument("country", choices=["za"])
@@ -206,7 +207,7 @@ def main() -> None:
         elif args.source_enrich_action == "promote":
             result = gap_promote(args.discovery_run_id, country=args.country, sample_per_cohort=args.sample_per_cohort, all_mappings=args.all_mappings)
         elif args.source_enrich_action == "combine":
-            result = gap_combine(args.child_run_id, country=args.country, baseline_run=args.baseline_run_id)
+            result = gap_combine(args.child_run_id, country=args.country, baseline_run=args.baseline_run_id, additional_child_runs=tuple(args.additional_child_run_id))
         else:
             result = source_enrich_report(args.run_id, country=args.country)
     elif args.command in {"report", "profile"}:

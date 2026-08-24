@@ -391,7 +391,7 @@ def promote(discovery_run: str, *, country: str = "ke", sample_per_cohort: int =
     return result
 
 
-def combine(child_run: str, *, country: str = "ke", baseline_run: str | None = None) -> dict:
+def combine(child_run: str, *, country: str = "ke", baseline_run: str | None = None, additional_child_runs: tuple[str, ...] = ()) -> dict:
     """Materialize a new deduplicated view from validated baseline and child rows."""
     roots = country_paths(country)
     child_root = roots.enriched / child_run
@@ -407,8 +407,8 @@ def combine(child_run: str, *, country: str = "ke", baseline_run: str | None = N
     if not baseline_run:
         raise ValueError("The child run does not record a baseline source run")
     baseline = roots.enriched / baseline_run / "source_enrichment.parquet"
-    child = child_root / "source_enrichment.parquet"
-    if not baseline.exists() or not child.exists():
+    child_paths = [child_root / "source_enrichment.parquet"] + [roots.enriched / run / "source_enrichment.parquet" for run in additional_child_runs]
+    if not baseline.exists() or any(not path.exists() for path in child_paths):
         raise FileNotFoundError("Baseline and completed child materializations are required")
     connection = duckdb.connect()
     combined_run = run_id(source_sha, "source-enrich-combined")
@@ -416,22 +416,24 @@ def combine(child_run: str, *, country: str = "ke", baseline_run: str | None = N
     output_root.mkdir(parents=True, exist_ok=True)
     columns = [row[0] for row in connection.execute("DESCRIBE SELECT * FROM read_parquet(?)", [str(baseline)]).fetchall()]
     column_sql = ", ".join(f'"{column}"' for column in columns)
+    sources = [(baseline_run, baseline_run, baseline)] + [(run, baseline_run, path) for run, path in zip(additional_child_runs[:], child_paths[1:])]
+    sources.insert(1, (child_run, baseline_run, child_paths[0]))
+    source_sql = "\n            UNION ALL\n".join(f"SELECT {column_sql}, ? AS source_run_id, ? AS parent_source_run_id FROM read_parquet(?)" for _ in sources)
     query = f"""
         WITH rows AS (
-            SELECT {column_sql}, ? AS source_run_id, ? AS parent_source_run_id FROM read_parquet(?)
-            UNION ALL
-            SELECT {column_sql}, ? AS source_run_id, ? AS parent_source_run_id FROM read_parquet(?)
+            {source_sql}
         ), ranked AS (
             SELECT *, row_number() OVER (PARTITION BY ocid ORDER BY source_run_id, external_record_id) AS rn FROM rows
         )
         SELECT * EXCLUDE (rn) FROM ranked WHERE rn = 1
     """
-    connection.execute("CREATE OR REPLACE TABLE combined AS " + query, [baseline_run, baseline_run, str(baseline), child_run, baseline_run, str(child)])
+    parameters = [value for source in sources for value in (source[0], source[1], str(source[2]))]
+    connection.execute("CREATE OR REPLACE TABLE combined AS " + query, parameters)
     combined_path = output_root / "source_enrichment_combined.parquet"
     connection.execute("COPY combined TO ? (FORMAT PARQUET, COMPRESSION ZSTD)", [str(combined_path)])
     connection.execute("COPY (SELECT ocid, source_run_id, parent_source_run_id, source_content_sha256, raw_response_path, external_record_id FROM combined) TO ? (FORMAT PARQUET, COMPRESSION ZSTD)", [str(output_root / "source_enrichment_provenance.parquet")])
     rows = connection.execute("SELECT count(*), count(DISTINCT ocid) FROM combined").fetchone()
     connection.close()
-    result = {"run_id": combined_run, "baseline_run_id": baseline_run, "child_run_id": child_run, "source_snapshot_sha256": source_sha, "rows": rows[0], "unique_ocids": rows[1], "output_root": str(output_root), "status": "complete"}
+    result = {"run_id": combined_run, "baseline_run_id": baseline_run, "child_run_ids": [child_run, *additional_child_runs], "source_snapshot_sha256": source_sha, "rows": rows[0], "unique_ocids": rows[1], "output_root": str(output_root), "status": "complete"}
     (output_root / "combined_manifest.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return result
