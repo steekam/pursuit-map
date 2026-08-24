@@ -396,8 +396,9 @@ def combine(child_run: str, *, country: str = "ke", baseline_run: str | None = N
     roots = country_paths(country)
     child_root = roots.enriched / child_run
     child_ledger = child_root / "ledger.duckdb"
-    connection = duckdb.connect(str(child_ledger), read_only=True)
-    metadata = connection.execute("SELECT source_snapshot_sha256, config_json FROM run_metadata WHERE run_id = ?", [child_run]).fetchone()
+    metadata_connection = duckdb.connect(str(child_ledger), read_only=True)
+    metadata = metadata_connection.execute("SELECT source_snapshot_sha256, config_json FROM run_metadata WHERE run_id = ?", [child_run]).fetchone()
+    metadata_connection.close()
     if not metadata:
         raise FileNotFoundError(f"Promotion run not found: {child_run}")
     source_sha, config_json = metadata
@@ -409,6 +410,7 @@ def combine(child_run: str, *, country: str = "ke", baseline_run: str | None = N
     child = child_root / "source_enrichment.parquet"
     if not baseline.exists() or not child.exists():
         raise FileNotFoundError("Baseline and completed child materializations are required")
+    connection = duckdb.connect()
     combined_run = run_id(source_sha, "source-enrich-combined")
     output_root = roots.enriched / combined_run
     output_root.mkdir(parents=True, exist_ok=True)
