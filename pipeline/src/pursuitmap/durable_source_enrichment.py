@@ -688,6 +688,34 @@ def resume(run: str, **kwargs) -> dict:
     return execute(run, **kwargs)
 
 
+def retry_failed(run: str, *, country: str = "ke", job_type: str | None = None) -> dict:
+    """Requeue terminal failures for an explicit operator retry."""
+    if job_type not in {None, "list", "detail"}:
+        raise ValueError("job_type must be list or detail")
+    ledger_path = country_paths(country).enriched / run / "ledger.duckdb"
+    if not ledger_path.exists():
+        raise FileNotFoundError(f"Run not found: {run}")
+    connection = duckdb.connect(str(ledger_path))
+    _create_ledger(connection)
+    filter_sql = " AND job_type = ?" if job_type else ""
+    parameters = [run, job_type] if job_type else [run]
+    failed = connection.execute(
+        f"SELECT job_id, attempts, http_status, error_class, error_message, response_hash FROM request_jobs WHERE run_id = ? AND status = 'permanent_failed'{filter_sql} ORDER BY job_id",
+        parameters,
+    ).fetchall()
+    for job_id, attempts, http_status, error_class, error_message, response_hash in failed:
+        connection.execute(
+            "INSERT INTO request_events VALUES (nextval('event_seq'), ?, ?, 'operator_requeued', 0, ?, TRUE, ?, ?, ?, ?)",
+            [job_id, attempts, http_status, error_class, error_message, response_hash, utc_now()],
+        )
+        connection.execute(
+            "UPDATE request_jobs SET status = 'pending', attempts = 0, next_attempt_at = 0, error_class = NULL, error_message = NULL, updated_at = ? WHERE job_id = ?",
+            [utc_now(), job_id],
+        )
+    connection.close()
+    return {"run_id": run, "requeued": len(failed), "job_type": job_type}
+
+
 def supervise(
     run: str,
     *,

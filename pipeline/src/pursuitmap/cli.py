@@ -20,6 +20,7 @@ from .durable_source_enrichment import report as source_enrich_report
 from .durable_source_enrichment import resume as source_enrich_resume
 from .durable_source_enrichment import status as source_enrich_status
 from .durable_source_enrichment import supervise as source_enrich_supervise
+from .durable_source_enrichment import retry_failed as source_enrich_retry_failed
 from .verification import verify_outputs
 from .document_download import plan as document_plan
 from .document_download import run as document_run
@@ -85,6 +86,10 @@ def main() -> None:
     durable_profile = durable_subparsers.add_parser("profile")
     durable_profile.add_argument("country", choices=["ke"])
     durable_profile.add_argument("--run-id", required=True)
+    durable_retry = durable_subparsers.add_parser("retry-failed")
+    durable_retry.add_argument("country", choices=["ke"])
+    durable_retry.add_argument("--run-id", required=True)
+    durable_retry.add_argument("--job-type", choices=["list", "detail"])
     durable_benchmark = durable_subparsers.add_parser("benchmark")
     durable_benchmark.add_argument("country", choices=["ke"])
     durable_benchmark.add_argument("--run-id", required=True)
@@ -155,6 +160,8 @@ def main() -> None:
             result = source_enrich_supervise(args.run_id, country=args.country, workers=args.workers, max_cycles=args.max_cycles, max_runtime_seconds=args.max_runtime_hours * 60 * 60)
         elif args.source_enrich_action == "profile":
             result = source_enrich_profile(args.run_id, country=args.country)
+        elif args.source_enrich_action == "retry-failed":
+            result = source_enrich_retry_failed(args.run_id, country=args.country, job_type=args.job_type)
         else:
             result = source_enrich_report(args.run_id, country=args.country)
     elif args.command in {"report", "profile"}:

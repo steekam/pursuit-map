@@ -180,3 +180,24 @@ def test_supervisor_resumes_after_rate_limit_pause(monkeypatch, tmp_path):
     state = json.loads((roots.enriched / "run" / "supervisor.json").read_text())
     assert state["phase"] == "complete"
     assert state["cycle_count"] == 2
+
+
+def test_retry_failed_requeues_terminal_jobs(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "DATA_ROOT", tmp_path / "data")
+    roots = paths.country_paths("ke")
+    run_root = roots.enriched / "run"
+    run_root.mkdir(parents=True)
+    connection = duckdb.connect(str(run_root / "ledger.duckdb"))
+    engine._create_ledger(connection)
+    engine._create_sequences(connection)
+    engine._insert_job(connection, "run", "list", "/list", "https://example.test/list", {})
+    connection.execute("UPDATE request_jobs SET status='permanent_failed', attempts=6, http_status=500, error_class='http_500', error_message='server error'")
+    connection.close()
+
+    result = engine.retry_failed("run", country="ke", job_type="list")
+
+    assert result["requeued"] == 1
+    connection = duckdb.connect(str(run_root / "ledger.duckdb"), read_only=True)
+    assert connection.execute("SELECT status, attempts FROM request_jobs").fetchone() == ("pending", 0)
+    assert connection.execute("SELECT state, error_class FROM request_events").fetchone() == ("operator_requeued", "http_500")
+    connection.close()
