@@ -47,6 +47,8 @@ The raw artifact is stored under `data/raw/` with a SHA-256 manifest. Each norma
 
 Use `pursuitmap source-enrich supervise ke --run-id <run-id>` to resume the run after rate-limit or network pauses. The supervisor waits for the configured cooldown, records cycles in `supervisor.json`, and stops at its cycle or runtime bound. `pursuitmap source-enrich status ke --run-id <run-id>` reads the sidecars without opening DuckDB while a worker is active.
 
+Use `pursuitmap source-enrich analyze ke --run-id <run-id>` to create the final quality comparison and release-month mapping-gap reports from the completed Parquet outputs.
+
 Cross-session operating rules live in [`AGENTS.md`](AGENTS.md). The machine-readable pipeline contract is [`config/pipeline-contract.json`](config/pipeline-contract.json); tests enforce its required layers, operations, determinism, and boundaries.
 
 Project phase status and next decisions are tracked in [`docs/roadmap/phase-tracker.md`](docs/roadmap/phase-tracker.md).

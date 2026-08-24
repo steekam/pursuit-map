@@ -17,6 +17,7 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 | --- | --- | --- | --- |
 | Phase 0 — domain and source understanding | complete | [domain glossary](../domain/glossary.md), [South Africa OCDS notes](../domain/south-africa-ocds.md), [ADR-001](../architecture/adr-001-local-first-foundation.md) | Keep South Africa as the baseline source for this milestone. |
 | Kenya source comparison | complete | [Kenya PPIP source notes](../domain/kenya-ppip.md), [comparison build log](../build-log/2026-08-23-kenya-source-comparison.md), [normalization benchmark](../build-log/2026-08-23-kenya-normalization-benchmark.md), [adapter build log](../build-log/2026-08-23-kenya-vectorized-adapter.md) | Decide which source enrichments justify the next pipeline stage. |
+| Kenya PPIP source enrichment | complete with warning | Fresh run `source-enrich-20260824T134223819613Z-5501335abfb5`, [quality report](../../data/enriched/kenya/source-enrich-20260824T134223819613Z-5501335abfb5/source_enrichment_quality_report.json), [mapping-gap report](../../data/enriched/kenya/source-enrich-20260824T134223819613Z-5501335abfb5/source_mapping_gap_report.json) | Decide whether the mapping gaps justify further API investigation. |
 | Phase 1 — reproducible data foundation | complete | [canonical schema](../domain/canonical-schema.md), [quality report](../build-log/2026-08-23-phase-0-1-foundation.md), commits `78af6cb`, `183c975` | Whether document acquisition or entity review has higher value. |
 | Phase 1 — descriptive analytics | complete | [descriptive SQL](../../analytics/queries/phase1_descriptive.sql), materialized marts, commit `4759e71` | Which explorer views deserve a product surface. |
 | Phase 1.5 — deterministic retrieval lab | in progress | [ICT taxonomy](../../config/verticals/ict.json), [construction taxonomy](../../config/verticals/construction.json), [healthcare taxonomy](../../config/verticals/healthcare.json), [vertical comparison](../build-log/2026-08-23-vertical-comparison.md) | Build a reviewed challenge set before making accuracy claims. |
@@ -64,6 +65,7 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 3. Measure field-level agreement and evidence completeness. Do not call the result precision, recall, or commercial accuracy beyond this reviewed sample.
 4. Create a small reviewed retrieval challenge set from fixtures and current-source candidates.
 5. Compare title-only, title-plus-description, category, and full-metadata retrieval against the set.
+6. Review the completed Kenya quality and mapping-gap reports before document acquisition.
 
 ## Queued cleanup tasks
 

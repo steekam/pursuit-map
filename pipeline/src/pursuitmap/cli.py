@@ -27,6 +27,7 @@ from .document_download import run as document_run
 from .document_features import extract_features, report as document_feature_report
 from .source_enrichment_benchmark import benchmark as source_enrich_benchmark
 from .enrichment_profile import profile as source_enrich_profile
+from .enrichment_analysis import analyze as source_enrich_analyze
 
 
 def main() -> None:
@@ -90,6 +91,9 @@ def main() -> None:
     durable_retry.add_argument("country", choices=["ke"])
     durable_retry.add_argument("--run-id", required=True)
     durable_retry.add_argument("--job-type", choices=["list", "detail"])
+    durable_analyze = durable_subparsers.add_parser("analyze")
+    durable_analyze.add_argument("country", choices=["ke"])
+    durable_analyze.add_argument("--run-id", required=True)
     durable_benchmark = durable_subparsers.add_parser("benchmark")
     durable_benchmark.add_argument("country", choices=["ke"])
     durable_benchmark.add_argument("--run-id", required=True)
@@ -162,6 +166,8 @@ def main() -> None:
             result = source_enrich_profile(args.run_id, country=args.country)
         elif args.source_enrich_action == "retry-failed":
             result = source_enrich_retry_failed(args.run_id, country=args.country, job_type=args.job_type)
+        elif args.source_enrich_action == "analyze":
+            result = source_enrich_analyze(args.run_id, country=args.country)
         else:
             result = source_enrich_report(args.run_id, country=args.country)
     elif args.command in {"report", "profile"}:
