@@ -226,6 +226,18 @@ def _enqueue_next_page(connection, job: tuple, payload: bytes, max_jobs: int) ->
     _insert_job(connection, job[1], job[2], job[3], next_params, cohort_year=job[6], filter_field=job[7], filter_value=job[8])
 
 
+def _enqueue_contract_fallback(connection, job: tuple, max_jobs: int) -> None:
+    params = json.loads(job[5])
+    if job[3] != "/api/contract" or int(params.get("perpage", 0)) != 50:
+        return
+    page = int(params.get("page", 1))
+    first_page = (page - 1) * 5 + 1
+    for fallback_page in range(first_page, first_page + 5):
+        if connection.execute("SELECT count(*) FROM discovery_jobs WHERE run_id = ?", [job[1]]).fetchone()[0] >= max_jobs:
+            break
+        _insert_job(connection, job[1], "archive", job[3], {"perpage": 10, "page": fallback_page}, cohort_year=job[6], filter_field="contract_page_split", filter_value=str(fallback_page))
+
+
 def execute(run: str, *, country: str = "ke", config_path: Path | None = None, sleep: Callable[[float], None] = time.sleep, randomizer: Callable[[], float] = random.random) -> dict:
     roots = country_paths(country)
     output_root = roots.enriched / run
@@ -289,6 +301,8 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
         except Exception as error:
             retryable, error_class = classify_status(None, error, config.retry_statuses)
             state = "retryable_failed" if retryable and attempts < config.max_attempts else "permanent_failed"
+            if state == "permanent_failed":
+                _enqueue_contract_fallback(connection, job, max_jobs)
             next_at = _now() + min(config.max_backoff_seconds, 2 ** attempts)
             connection.execute("UPDATE discovery_jobs SET status=?, next_attempt_at=?, error_class=?, error_message=?, updated_at=? WHERE job_id=?", [state, next_at, error_class, str(error), utc_now(), job_id])
             _record_event(connection, job_id, attempts, state, wait, None, state == "retryable_failed", error_class, str(error), None)
