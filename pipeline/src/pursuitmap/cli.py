@@ -25,6 +25,7 @@ from .document_download import plan as document_plan
 from .document_download import run as document_run
 from .document_features import extract_features, report as document_feature_report
 from .source_enrichment_benchmark import benchmark as source_enrich_benchmark
+from .enrichment_profile import profile as source_enrich_profile
 
 
 def main() -> None:
@@ -81,6 +82,9 @@ def main() -> None:
     durable_supervise.add_argument("--workers", type=int)
     durable_supervise.add_argument("--max-cycles", type=int, default=100)
     durable_supervise.add_argument("--max-runtime-hours", type=float, default=24.0)
+    durable_profile = durable_subparsers.add_parser("profile")
+    durable_profile.add_argument("country", choices=["ke"])
+    durable_profile.add_argument("--run-id", required=True)
     durable_benchmark = durable_subparsers.add_parser("benchmark")
     durable_benchmark.add_argument("country", choices=["ke"])
     durable_benchmark.add_argument("--run-id", required=True)
@@ -149,6 +153,8 @@ def main() -> None:
             result = source_enrich_status(args.run_id, country=args.country)
         elif args.source_enrich_action == "supervise":
             result = source_enrich_supervise(args.run_id, country=args.country, workers=args.workers, max_cycles=args.max_cycles, max_runtime_seconds=args.max_runtime_hours * 60 * 60)
+        elif args.source_enrich_action == "profile":
+            result = source_enrich_profile(args.run_id, country=args.country)
         else:
             result = source_enrich_report(args.run_id, country=args.country)
     elif args.command in {"report", "profile"}:
