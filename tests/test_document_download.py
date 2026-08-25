@@ -38,3 +38,12 @@ def test_html_response_for_pdf_is_rejected(monkeypatch, tmp_path):
     monkeypatch.setattr(downloader, "_fetch", lambda url, timeout: (200, {"Content-Type": "text/html"}, b"<html>login</html>"))
     report = downloader.run(run_root, max_attempts=1, sleep=lambda _: None, randomizer=lambda: 0.0)
     assert report["job_counts"]["permanent_failed"] == 1
+
+
+def test_plan_accepts_canonical_document_rows(tmp_path):
+    source = tmp_path / "documents.parquet"
+    connection = duckdb.connect()
+    connection.execute("COPY (SELECT 'ocid' AS ocid, 'release' AS release_id, 'doc-1' AS document_id, 'Tender.pdf' AS title, 'https://example.test/file.pdf' AS url, 'basic' AS document_type) TO ? (FORMAT PARQUET)", [str(source)])
+    connection.close()
+    planned = downloader.plan(source, tmp_path / "document-run", source_run_id="source-run", source_snapshot_sha256="snapshot")
+    assert planned["jobs"] == 1

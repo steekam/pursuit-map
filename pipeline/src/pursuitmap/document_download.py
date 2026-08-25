@@ -62,23 +62,29 @@ def plan(input_parquet: Path, output_root: Path, *, source_run_id: str, source_s
     connection = duckdb.connect(str(ledger_path))
     _create_ledger(connection)
     rows: dict[str, dict] = {}
-    for ocid, release_id, attachments_json in connection.execute("SELECT ocid, release_id, attachments_json FROM read_parquet(?)", [str(input_parquet)]).fetchall():
-        for document in json.loads(attachments_json or "[]"):
-            if not isinstance(document, dict):
-                continue
-            raw_url = _attachment_url(document)
-            if not raw_url:
-                continue
-            try:
-                url = normalize_url(raw_url, base_url)
-            except ValueError:
-                continue
-            item = rows.setdefault(url, {"ocids": [], "release_ids": [], "document_ids": [], "references": []})
-            item["ocids"].append(ocid)
-            item["release_ids"].append(release_id)
-            item["references"].append({"ocid": ocid, "release_id": release_id, "document_id": str(document.get("id")) if document.get("id") is not None else None, "source_url": url})
-            if document.get("id") is not None:
-                item["document_ids"].append(str(document["id"]))
+    columns = {row[0] for row in connection.execute("DESCRIBE SELECT * FROM read_parquet(?)", [str(input_parquet)]).fetchall()}
+    if "attachments_json" in columns:
+        source_rows = ((ocid, release_id, document.get("document_id"), document) for ocid, release_id, attachments_json in connection.execute("SELECT ocid, release_id, attachments_json FROM read_parquet(?)", [str(input_parquet)]).fetchall() for document in json.loads(attachments_json or "[]"))
+    elif {"ocid", "release_id", "document_id", "url"}.issubset(columns):
+        source_rows = ((ocid, release_id, document_id, {"id": document_id, "url": url, "title": title, "documentType": document_type}) for ocid, release_id, document_id, title, url, document_type in connection.execute("SELECT ocid, release_id, document_id, title, url, document_type FROM read_parquet(?)", [str(input_parquet)]).fetchall())
+    else:
+        raise ValueError("document plan requires attachments_json or canonical document columns")
+    for ocid, release_id, document_id, document in source_rows:
+        if not isinstance(document, dict):
+            continue
+        raw_url = _attachment_url(document)
+        if not raw_url:
+            continue
+        try:
+            url = normalize_url(raw_url, base_url)
+        except ValueError:
+            continue
+        item = rows.setdefault(url, {"ocids": [], "release_ids": [], "document_ids": [], "references": []})
+        item["ocids"].append(ocid)
+        item["release_ids"].append(release_id)
+        item["references"].append({"ocid": ocid, "release_id": release_id, "document_id": str(document_id) if document_id is not None else None, "source_url": url})
+        if document_id is not None:
+            item["document_ids"].append(str(document_id))
     now = utc_now()
     for url, refs in rows.items():
         job_id = _job_id(url)
