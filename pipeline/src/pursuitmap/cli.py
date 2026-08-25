@@ -206,8 +206,10 @@ def main() -> None:
             result = source_enrich_analyze(args.run_id, country=args.country)
         elif args.source_enrich_action == "gap-plan":
             result = gap_plan(args.source_run_id, country=args.country, from_year=args.from_year, to_year=args.to_year, max_jobs=args.max_jobs, contract_only=args.contract_only, financial_year_json_only=args.financial_year_json, financial_year_json_resume_run=args.financial_year_json_resume_run)
-        elif args.source_enrich_action in {"gap-run", "gap-resume"}:
+        elif args.source_enrich_action == "gap-run":
             result = gap_execute(args.run_id, country=args.country)
+        elif args.source_enrich_action == "gap-resume":
+            result = gap_execute(args.run_id, country=args.country, reset_failures=True)
         elif args.source_enrich_action == "gap-report":
             result = gap_report(args.run_id, country=args.country)
         elif args.source_enrich_action == "promote":
