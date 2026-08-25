@@ -26,6 +26,7 @@ from .document_download import plan as document_plan
 from .document_download import run as document_run
 from .document_extraction import parse_run as document_parse
 from .document_features import extract_features, report as document_feature_report
+from .document_analysis import analyze_classification
 from .source_enrichment_benchmark import benchmark as source_enrich_benchmark
 from .mapping_discovery import execute as gap_execute
 from .mapping_discovery import partition_plan, partition_report
@@ -198,6 +199,10 @@ def main() -> None:
     documents_extract = documents_subparsers.add_parser("extract")
     documents_extract.add_argument("--run-root", type=Path, required=True)
     documents_extract.add_argument("--rules-path", type=Path, required=True)
+    documents_analysis = documents_subparsers.add_parser("classify-analyze")
+    documents_analysis.add_argument("--run-root", type=Path, required=True)
+    documents_analysis.add_argument("--classification-dir", type=Path, required=True)
+    documents_analysis.add_argument("--threshold", type=float, default=0.45)
     documents_report = documents_subparsers.add_parser("report")
     documents_report.add_argument("--run-root", type=Path, required=True)
 
@@ -278,6 +283,8 @@ def main() -> None:
             result = document_parse(args.run_root, limit=args.limit, skip_hashes=tuple(args.skip_hash), enable_ocr=args.ocr)
         elif args.documents_action == "extract":
             result = extract_features(args.run_root, args.rules_path)
+        elif args.documents_action == "classify-analyze":
+            result = analyze_classification(args.run_root, args.classification_dir, threshold=args.threshold)
         else:
             result = document_feature_report(args.run_root)
     else:
