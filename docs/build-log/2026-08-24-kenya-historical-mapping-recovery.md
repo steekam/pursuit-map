@@ -24,6 +24,11 @@ Date: 2026-08-24
 - The capture stored 11 raw workbooks and 140,938 export rows.
 - Exact tender-reference overlap with existing validated enrichment: 1,974 rows and 1,728 OCIDs.
 - Accepted canonical additions from Excel: 0.
+- Resumable JSON continuation run: `mapping-discovery-20260825T010320496668Z-5501335abfb5`.
+- The continuation retried the eight prior failed pages and seeded the next page for each financial year.
+- One page succeeded and 10 pages reached permanent `TimeoutError` after the configured retry limit.
+- The continuation produced 0 candidate mappings and 0 new canonical matches.
+- An independent 15-second connectivity check to the same endpoint returned HTTP 000 with 0 bytes.
 
 ## Decisions
 
@@ -40,3 +45,4 @@ Date: 2026-08-24
 - The source returned rate-limit responses during promotion. The remaining sample requires controlled resume.
 - The bounded discovery run recovered 3,111 previously unvalidated canonical OCIDs. Two discovery matches were already covered elsewhere. The remaining 242,422 baseline `mapping_pending` records need a new source-discovery strategy.
 - The Excel route has no OCID or tender ID. Its exact reference matches remain diagnostics until an OCID-bearing response validates each join. Current canonical coverage therefore remains 16,710 / 259,132 = 6.448%.
+- The JSON continuation batch is a zero-yield network-outage result. Its failures remain separate from source-coverage conclusions.

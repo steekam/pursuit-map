@@ -59,6 +59,7 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 - Kenya PPIP source enrichment has a durable DuckDB ledger and passed the first 25-limit pilot with 100% detail OCID validation.
 - The bounded historical discovery pilot captured 247 successful and 3 timed-out probes. It found 3,113 new canonical matches from 18,784 candidate mappings.
 - Historical promotion uses a child ledger. The first child sample has 87 validated detail rows and 3 HTTP 429 responses. Pending jobs remain resumable.
+- The first financial-year JSON continuation batch (`mapping-discovery-20260825T010320496668Z-5501335abfb5`) produced 1 successful page, 10 timeout failures, and 0 new mappings during a portal connectivity outage. The run is preserved for retry.
 - Both promotion children passed. The final combined view has 16,710 unique validated OCIDs, with 0 duplicate OCIDs.
 - Entity merging, prediction, lead scoring, API, and browser UI are not implemented.
 
