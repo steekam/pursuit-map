@@ -29,6 +29,8 @@ Date: 2026-08-24
 - One page succeeded and 10 pages reached permanent `TimeoutError` after the configured retry limit.
 - The continuation produced 0 candidate mappings and 0 new canonical matches.
 - An independent 15-second connectivity check to the same endpoint returned HTTP 000 with 0 bytes.
+- A retry was interrupted during another endpoint outage. The preserved ledger records 1 succeeded job, 4 permanent timeout failures, 5 retryable timeout failures, and 1 interrupted running job. No mappings were added.
+- The discovery executor now resets interrupted `running` jobs with transient error classes during resume.
 
 ## Decisions
 
