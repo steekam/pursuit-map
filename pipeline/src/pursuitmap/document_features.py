@@ -226,6 +226,9 @@ def extract_features(run_root: Path, rules_path: Path) -> dict:
     links: list[dict[str, Any]] = []
     summaries: list[dict[str, Any]] = []
     input_manifests = sorted((run_root / "files").glob("*.input.json"))
+    direct_manifests = [path for path in input_manifests if not path.name.endswith(".archive.input.json")]
+    metadata_by_path = {path: json.loads(path.read_text(encoding="utf-8")) for path in input_manifests}
+    archive_parents = {metadata.get("parent_document_hash") for metadata in metadata_by_path.values() if metadata.get("parent_document_hash")}
     ref_rows: dict[str, list[tuple]] = defaultdict(list)
     ledger_path = run_root / "ledger.duckdb"
     if ledger_path.exists():
@@ -238,8 +241,8 @@ def extract_features(run_root: Path, rules_path: Path) -> dict:
             pass
         ledger.close()
     for input_path in input_manifests:
-        metadata = json.loads(input_path.read_text(encoding="utf-8"))
-        document_hash = Path(metadata["path"]).name
+        metadata = metadata_by_path[input_path]
+        document_hash = metadata.get("response_hash") or Path(metadata["path"]).name
         doc_path = extraction_root / document_hash / "docling.json"
         if not doc_path.exists():
             continue
@@ -305,7 +308,7 @@ def extract_features(run_root: Path, rules_path: Path) -> dict:
     reference_counts = Counter(row["document_hash"] for row in links)
     report = {
         "run_root": str(run_root), "rules_path": str(rules_path), "rule_version": registry["rule_version"],
-        "input_documents": len(input_manifests), "documents_with_features": len(summaries),
+        "input_documents": len(direct_manifests), "expanded_archive_members": len(input_manifests) - len(direct_manifests), "documents_with_features": len(summaries),
         "occurrence_count": len(occurrences), "link_count": len(links),
         "feature_counts": dict(Counter(row["feature_key"] for row in occurrences)),
         "conflict_count": sum(row["conflict_count"] or 0 for row in summaries),
@@ -316,7 +319,7 @@ def extract_features(run_root: Path, rules_path: Path) -> dict:
         "ocr_derived_occurrences": sum(1 for row in occurrences if row["ocr_derived"] is True),
         "duplicate_content": {"unique_content_hashes": len(reference_counts), "referenced_more_than_once": sum(1 for count in reference_counts.values() if count > 1), "max_references": max(reference_counts.values(), default=0)},
         "parser_versions": parser_versions,
-        "unparsed_documents": len(input_manifests) - len(summaries),
+        "unparsed_documents": sum(1 for path in direct_manifests if not (extraction_root / Path(metadata_by_path[path]["path"]).name / "docling.json").exists() and Path(metadata_by_path[path]["path"]).name not in archive_parents),
         "ocr_status": "unavailable_in_extraction_manifest",
         "source_limitations": [
             "Document-derived observations do not overwrite canonical OCDS values.",

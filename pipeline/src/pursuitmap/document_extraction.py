@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from importlib.metadata import PackageNotFoundError, version
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -23,6 +24,9 @@ class DocumentInput:
     ocid: str
     release_id: str
     document_id: str
+    source_run_id: str | None = None
+    parent_document_hash: str | None = None
+    archive_member: str | None = None
 
 
 def _require_docling():
@@ -65,6 +69,9 @@ def _write_extraction(document: DocumentInput, output_dir: Path, converter: obje
         "ocid": document.ocid,
         "release_id": document.release_id,
         "document_id": document.document_id,
+        "source_run_id": document.source_run_id,
+        "parent_document_hash": document.parent_document_hash,
+        "archive_member": document.archive_member,
         "input_path": str(document.path),
         "input_sha256": input_sha256,
         "parser": PARSER_NAME,
@@ -80,6 +87,63 @@ def _write_extraction(document: DocumentInput, output_dir: Path, converter: obje
     }
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest
+
+
+ARCHIVE_SUFFIXES = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".csv", ".html", ".htm", ".txt", ".md"}
+
+
+def _expand_archive(document: DocumentInput, run_root: Path) -> tuple[list[DocumentInput], list[dict]]:
+    """Extract supported archive members into a content-addressed staging area."""
+    parent_hash = sha256_file(document.path)
+    expanded_root = run_root / "expanded" / parent_hash
+    children: list[DocumentInput] = []
+    warnings: list[dict] = []
+    try:
+        archive = zipfile.ZipFile(document.path)
+    except zipfile.BadZipFile as error:
+        return [], [{"member": None, "error_type": type(error).__name__, "error": str(error)}]
+    with archive:
+        for member in archive.infolist():
+            if member.is_dir():
+                continue
+            member_path = Path(member.filename)
+            suffix = member_path.suffix.lower()
+            if suffix not in ARCHIVE_SUFFIXES:
+                warnings.append({"member": member.filename, "status": "unsupported_suffix", "suffix": suffix})
+                continue
+            if member_path.is_absolute() or ".." in member_path.parts:
+                warnings.append({"member": member.filename, "status": "unsafe_path"})
+                continue
+            payload = archive.read(member)
+            child_hash = __import__("hashlib").sha256(payload).hexdigest()
+            child_path = expanded_root / f"{child_hash}{suffix}"
+            child_path.parent.mkdir(parents=True, exist_ok=True)
+            if not child_path.exists():
+                child_path.write_bytes(payload)
+            children.append(DocumentInput(
+                path=child_path,
+                source_url=document.source_url,
+                source_snapshot_sha256=document.source_snapshot_sha256,
+                ocid=document.ocid,
+                release_id=document.release_id,
+                document_id=document.document_id,
+                source_run_id=document.source_run_id,
+                parent_document_hash=parent_hash,
+                archive_member=member.filename,
+            ))
+            child_manifest = run_root / "files" / f"{child_hash}.archive.input.json"
+            if not child_manifest.exists():
+                child_manifest.write_text(json.dumps({
+                    "path": str(child_path), "source_url": document.source_url,
+                    "source_run_id": document.source_run_id,
+                    "source_snapshot_sha256": document.source_snapshot_sha256,
+                    "ocids": document.ocid.split("|") if document.ocid else [],
+                    "release_ids": document.release_id.split("|") if document.release_id else [],
+                    "document_ids": document.document_id.split("|") if document.document_id else [],
+                    "response_hash": child_hash, "parent_document_hash": parent_hash,
+                    "archive_member": member.filename, "status": "captured",
+                }, indent=2) + "\n", encoding="utf-8")
+    return children, warnings
 
 
 def extract_document(document: DocumentInput, output_dir: Path) -> dict:
@@ -116,9 +180,10 @@ def parse_run(run_root: Path, *, limit: int | None = None, skip_hashes: tuple[st
             ocid="|".join(metadata.get("ocids") or []),
             release_id="|".join(metadata.get("release_ids") or []),
             document_id="|".join(metadata.get("document_ids") or []),
+            source_run_id=metadata.get("source_run_id"),
         ))
     pending.sort(key=lambda document: (document.path.stat().st_size, sha256_file(document.path)))
-    progress = {"run_root": str(run_root), "input_documents": len(input_paths), "skipped": skipped, "skip_hashes": sorted(skipped_hashes), "pending": len(pending), "processed": 0, "parsed": 0, "failed": 0, "ocr_enabled": enable_ocr, "status": "running", "updated_at": utc_now()}
+    progress = {"run_root": str(run_root), "input_documents": len(input_paths), "skipped": skipped, "skip_hashes": sorted(skipped_hashes), "pending": len(pending), "processed": 0, "parsed": 0, "failed": 0, "archives_expanded": 0, "archive_members": 0, "archive_warnings": 0, "ocr_enabled": enable_ocr, "status": "running", "updated_at": utc_now()}
     progress_path = run_root / "document_extraction_progress.json"
     progress_path.write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
     failures = []
@@ -126,8 +191,20 @@ def parse_run(run_root: Path, *, limit: int | None = None, skip_hashes: tuple[st
     for index, document in enumerate(pending):
         document_hash = sha256_file(document.path)
         try:
-            _write_extraction(document, output_dir, converter)
-            progress["parsed"] += 1
+            documents = [document]
+            if zipfile.is_zipfile(document.path):
+                documents, warnings = _expand_archive(document, run_root)
+                progress["archives_expanded"] += 1
+                progress["archive_members"] += len(documents)
+                progress["archive_warnings"] += len(warnings)
+                if not documents:
+                    raise ValueError("archive contains no supported document members")
+            for child in documents:
+                child_hash = sha256_file(child.path)
+                if child_hash in skipped_hashes or (output_dir / child_hash / "extraction_manifest.json").exists():
+                    continue
+                _write_extraction(child, output_dir, converter)
+                progress["parsed"] += 1
         except Exception as error:
             failures.append({"document_hash": document_hash, "path": str(document.path), "error_type": type(error).__name__, "error": str(error)})
             progress["failed"] += 1

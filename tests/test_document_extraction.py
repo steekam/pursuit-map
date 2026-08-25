@@ -1,4 +1,5 @@
 import json
+import zipfile
 
 import pytest
 
@@ -90,3 +91,44 @@ def test_parse_run_can_checkpoint_and_skip_hash(monkeypatch, tmp_path):
     value = parse_run(run_root, skip_hashes=(digest,))
     assert value["skipped"] == 1
     assert value["total_parsed"] == 1
+
+
+def test_parse_run_expands_zip_members_and_preserves_parent_provenance(monkeypatch, tmp_path):
+    run_root = tmp_path / "run"
+    files = run_root / "files"
+    files.mkdir(parents=True)
+    source = files / "archive"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("notice.txt", "Tender notice")
+        archive.writestr("readme.bin", b"ignored")
+    (files / "archive.input.json").write_text(json.dumps({
+        "path": str(source), "response_hash": "archive-response", "source_url": "https://example.test/archive.zip",
+        "ocids": ["ocid"], "release_ids": ["release"], "document_ids": ["doc"],
+    }))
+
+    class FakeDocument:
+        def save_as_json(self, path):
+            open(path, "w", encoding="utf-8").write(json.dumps({"pages": []}))
+
+        def export_to_markdown(self):
+            return "# Archive member\n"
+
+    class FakeResult:
+        document = FakeDocument()
+
+    class FakeConverter:
+        def convert(self, path):
+            assert path.endswith(".txt")
+            return FakeResult()
+
+    monkeypatch.setattr("pursuitmap.document_extraction._make_converter", lambda **kwargs: FakeConverter())
+    value = parse_run(run_root)
+    assert value["archives_expanded"] == 1
+    assert value["archive_members"] == 1
+    assert value["archive_warnings"] == 1
+    assert value["parsed"] == 1
+    manifests = list((run_root / "extracted").glob("*/extraction_manifest.json"))
+    assert len(manifests) == 1
+    manifest = json.loads(manifests[0].read_text())
+    assert manifest["parent_document_hash"]
+    assert manifest["archive_member"] == "notice.txt"
