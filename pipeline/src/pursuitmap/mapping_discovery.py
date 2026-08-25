@@ -103,7 +103,37 @@ def _date_values(canonical: Path, pending: set[str], field: str, years: list[int
     return selected
 
 
-def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year: int = 2025, max_jobs: int = 250, config_path: Path | None = None, contract_only: bool = False, financial_year_json_only: bool = False) -> dict:
+def _financial_year_resume_pages(resume_run_root: Path) -> dict[int, list[int]]:
+    ledger_path = resume_run_root / "ledger.duckdb"
+    if not ledger_path.exists():
+        raise FileNotFoundError(f"Discovery resume run not found: {resume_run_root.name}")
+    connection = duckdb.connect(str(ledger_path), read_only=True)
+    rows = connection.execute(
+        "SELECT status, params_json FROM discovery_jobs WHERE endpoint = '/api/get/explored-contracts'"
+    ).fetchall()
+    connection.close()
+    successful: dict[int, list[int]] = {}
+    failed: dict[int, list[int]] = {}
+    for status, params_json in rows:
+        params = json.loads(params_json)
+        clauses = json.loads(params.get("clauses", "[]"))
+        if not clauses or clauses[0].get("col") != "financial_year_id":
+            continue
+        year_id = int(clauses[0]["value"])
+        page = int(params.get("page", 1))
+        target = successful if status == "succeeded" else failed if status == "permanent_failed" else None
+        if target is not None:
+            target.setdefault(year_id, []).append(page)
+    pages: dict[int, list[int]] = {}
+    for year_id, values in successful.items():
+        next_page = max(values) + 1
+        pages[year_id] = sorted(set(failed.get(year_id, []) + [next_page]))
+    for year_id, values in failed.items():
+        pages.setdefault(year_id, sorted(set(values)))
+    return pages
+
+
+def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year: int = 2025, max_jobs: int = 250, config_path: Path | None = None, contract_only: bool = False, financial_year_json_only: bool = False, financial_year_json_resume_run: str | None = None) -> dict:
     if country != "ke" or from_year > to_year:
         raise ValueError("country must be ke and from_year must be <= to_year")
     pending, validated, canonical, source_sha = _canonical_context(source_run, country)
@@ -114,8 +144,9 @@ def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year
     output_root.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect(str(output_root / "ledger.duckdb"))
     _create_ledger(connection)
-    connection.execute("INSERT INTO run_metadata VALUES (?, ?, ?, ?, ?, ?, 'planned', ?)", [run, country, source_run, source_sha, json.dumps({"version": DISCOVERY_VERSION, "config": config.__dict__}), utc_now(), max_jobs])
+    connection.execute("INSERT INTO run_metadata VALUES (?, ?, ?, ?, ?, ?, 'planned', ?)", [run, country, source_run, source_sha, json.dumps({"version": DISCOVERY_VERSION, "config": config.__dict__, "financial_year_json_resume_run": financial_year_json_resume_run}), utc_now(), max_jobs])
     jobs: list[tuple] = []
+    resume_pages = _financial_year_resume_pages(roots.enriched / financial_year_json_resume_run) if financial_year_json_resume_run else {}
     years = list(range(from_year, to_year + 1)) + [2026]
     for endpoint in LIST_ENDPOINTS:
         metadata_values: dict[str, str] = {}
@@ -152,7 +183,9 @@ def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year
         if endpoint == "/api/get/explored-contracts":
             for year_id, label in FINANCIAL_YEAR_IDS:
                 clauses = json.dumps([{"col": "financial_year_id", "value": year_id, "type": "nominal"}], separators=(",", ":"))
-                jobs.append((endpoint, {"perpage": 10, "page": 1, "clauses": clauses}, int(label[:4]), "financial_year", label))
+                pages = resume_pages.get(year_id, [1])
+                for page in pages:
+                    jobs.append((endpoint, {"perpage": 10, "page": page, "clauses": clauses}, int(label[:4]), "financial_year", label))
         elif endpoint == "/api/contract":
             jobs.append((endpoint, {"perpage": 50, "page": 1}, None, "contract_archive", ""))
         else:
