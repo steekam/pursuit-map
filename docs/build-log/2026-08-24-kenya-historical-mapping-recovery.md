@@ -108,3 +108,9 @@ Measured role counts: 25 tender notices, 17 tender documents, 15 correspondence 
 The deterministic similarity pass used TF-IDF token vectors and a cosine threshold of 0.45. It produced 49 clusters and 612 similarity edges. Framework agreements had the highest within-role similarity (0.799; n=2). Tender documents were moderately similar (0.336; n=17). Meeting minutes (0.185), evaluation records (0.202), correspondence (0.166), and tender notices (0.107) were less similar. A 32-document cross-role cluster shows that procurement boilerplate creates false global similarity. Future clustering must condition on role, section headings, buyer, and tender number.
 
 The next rule refinement will use role-conditioned profiles. Tender documents can expose technical, commercial, eligibility, and evaluation fields. Notices should prioritize identity, timing, buyer, and eligibility. Correspondence and minutes require tighter section and phrase rules. Agent labels remain observations until human review confirms them.
+
+## 2026-08-25 — second classification pass and agreement
+
+GPT-5.6 Luna at high reasoning repeated the same 32, 32, and 31 document batches. Role agreement with the first pass was 92/95 (96.84%). Three records changed role: one tender notice became a tender document, one tender notice became correspondence, and one correspondence became unknown. The disagreements remain in the human review queue.
+
+Standardization flags agreed for 91/95 documents (95.79%). The second pass produced 23 tender notices, 18 tender documents, 15 correspondence items, 11 meeting-minutes sets, 9 evaluation records, 5 unknown documents, and the same smaller role groups. The role pattern is stable enough to guide provisional rule profiles. The labels still require review before they become ground truth.
