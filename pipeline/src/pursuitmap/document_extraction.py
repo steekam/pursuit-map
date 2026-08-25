@@ -33,6 +33,18 @@ def _require_docling():
     return DocumentConverter
 
 
+def _make_converter(*, enable_ocr: bool):
+    converter_class = _require_docling()
+    if enable_ocr:
+        return converter_class()
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.document_converter import PdfFormatOption
+
+    options = PdfPipelineOptions(do_ocr=False)
+    return converter_class(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)})
+
+
 def _write_extraction(document: DocumentInput, output_dir: Path, converter: object) -> dict:
     """Convert one captured document with a supplied converter."""
     if not document.path.is_file():
@@ -81,7 +93,7 @@ def extract_documents(documents: list[DocumentInput], output_dir: Path) -> list[
     return [_write_extraction(document, output_dir, converter) for document in documents]
 
 
-def parse_run(run_root: Path, *, limit: int | None = None, skip_hashes: tuple[str, ...] = ()) -> dict:
+def parse_run(run_root: Path, *, limit: int | None = None, skip_hashes: tuple[str, ...] = (), enable_ocr: bool = False) -> dict:
     """Parse captured content hashes once and record resumable progress."""
     input_paths = sorted((run_root / "files").glob("*.input.json"))
     output_dir = run_root / "extracted"
@@ -103,11 +115,11 @@ def parse_run(run_root: Path, *, limit: int | None = None, skip_hashes: tuple[st
             release_id="|".join(metadata.get("release_ids") or []),
             document_id="|".join(metadata.get("document_ids") or []),
         ))
-    progress = {"run_root": str(run_root), "input_documents": len(input_paths), "skipped": skipped, "pending": len(pending), "processed": 0, "parsed": 0, "failed": 0, "status": "running", "updated_at": utc_now()}
+    progress = {"run_root": str(run_root), "input_documents": len(input_paths), "skipped": skipped, "pending": len(pending), "processed": 0, "parsed": 0, "failed": 0, "ocr_enabled": enable_ocr, "status": "running", "updated_at": utc_now()}
     progress_path = run_root / "document_extraction_progress.json"
     progress_path.write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
     failures = []
-    converter = _require_docling()() if pending else None
+    converter = _make_converter(enable_ocr=enable_ocr) if pending else None
     for index, document in enumerate(pending):
         document_hash = sha256_file(document.path)
         try:

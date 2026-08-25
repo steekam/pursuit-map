@@ -72,7 +72,7 @@ def test_parse_run_uses_one_converter_and_writes_progress(monkeypatch, tmp_path)
         def convert(self, path):
             return FakeResult()
 
-    monkeypatch.setattr("pursuitmap.document_extraction._require_docling", lambda: FakeConverter)
+    monkeypatch.setattr("pursuitmap.document_extraction._make_converter", lambda **kwargs: FakeConverter())
     value = parse_run(run_root)
     assert value["total_parsed"] == 1
     assert created == 1
