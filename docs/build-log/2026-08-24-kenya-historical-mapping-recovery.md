@@ -98,3 +98,13 @@ After network-enabled resume, detail validation accepted 32 of 69 archive candid
 The first Docling run used default OCR and spent about 50 minutes on one 10.9 MB scanned PDF. The run produced no manifest before interruption. The parser now checkpoints after each binary, records failures, orders pending files by size, and uses embedded PDF text by default. OCR requires the explicit `--ocr` option.
 
 The bounded retry parsed 10 more binaries without failures. The document run now has 53 parsed binaries, 42 pending binaries, and one skipped scan hash. Rule extraction produced 7,142 evidence occurrences across 53 binaries. Evidence completeness is 7,142/7,142 (100%). The feature report status is `warn` because 42 of 95 captured binaries still lack Docling output.
+
+## 2026-08-25 — first-pass document classification
+
+Three GPT-5.4 mini workers classified the 95 parsed binaries in batches of 32, 32, and 31. The workers wrote evidence-backed JSONL records with a controlled primary role, secondary roles, confidence, standardization observation, and extraction limitations.
+
+Measured role counts: 25 tender notices, 17 tender documents, 15 correspondence items, 11 meeting-minutes sets, 9 evaluation records, 4 forms, 3 supplier-registration documents, 2 addenda, 2 framework agreements, 2 technical specifications, 1 RFP, and 4 unknown documents. Confidence was high for 63, medium for 27, and low for 5. Workers marked 76 documents as likely standardized. This is an agent observation, not a reviewed gold label.
+
+The deterministic similarity pass used TF-IDF token vectors and a cosine threshold of 0.45. It produced 49 clusters and 612 similarity edges. Framework agreements had the highest within-role similarity (0.799; n=2). Tender documents were moderately similar (0.336; n=17). Meeting minutes (0.185), evaluation records (0.202), correspondence (0.166), and tender notices (0.107) were less similar. A 32-document cross-role cluster shows that procurement boilerplate creates false global similarity. Future clustering must condition on role, section headings, buyer, and tender number.
+
+The next rule refinement will use role-conditioned profiles. Tender documents can expose technical, commercial, eligibility, and evaluation fields. Notices should prioritize identity, timing, buyer, and eligibility. Correspondence and minutes require tighter section and phrase rules. Agent labels remain observations until human review confirms them.
