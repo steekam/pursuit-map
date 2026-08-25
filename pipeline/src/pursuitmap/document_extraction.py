@@ -100,7 +100,9 @@ def parse_run(run_root: Path, *, limit: int | None = None, skip_hashes: tuple[st
     output_dir.mkdir(parents=True, exist_ok=True)
     pending = []
     skipped = 0
-    skipped_hashes = set(skip_hashes)
+    previous_progress_path = run_root / "document_extraction_progress.json"
+    previous_progress = json.loads(previous_progress_path.read_text(encoding="utf-8")) if previous_progress_path.exists() else {}
+    skipped_hashes = set(skip_hashes) | set(previous_progress.get("skip_hashes") or [])
     for input_path in input_paths:
         metadata = json.loads(input_path.read_text(encoding="utf-8"))
         document_hash = metadata.get("response_hash") or Path(metadata["path"]).name
@@ -115,7 +117,8 @@ def parse_run(run_root: Path, *, limit: int | None = None, skip_hashes: tuple[st
             release_id="|".join(metadata.get("release_ids") or []),
             document_id="|".join(metadata.get("document_ids") or []),
         ))
-    progress = {"run_root": str(run_root), "input_documents": len(input_paths), "skipped": skipped, "pending": len(pending), "processed": 0, "parsed": 0, "failed": 0, "ocr_enabled": enable_ocr, "status": "running", "updated_at": utc_now()}
+    pending.sort(key=lambda document: (document.path.stat().st_size, sha256_file(document.path)))
+    progress = {"run_root": str(run_root), "input_documents": len(input_paths), "skipped": skipped, "skip_hashes": sorted(skipped_hashes), "pending": len(pending), "processed": 0, "parsed": 0, "failed": 0, "ocr_enabled": enable_ocr, "status": "running", "updated_at": utc_now()}
     progress_path = run_root / "document_extraction_progress.json"
     progress_path.write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
     failures = []
