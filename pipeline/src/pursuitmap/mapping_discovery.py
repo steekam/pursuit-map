@@ -302,7 +302,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     response_root.mkdir(exist_ok=True)
     limiter = RateLimiter(config.refill_rate_per_second, config.jitter_seconds, sleeper=sleep, randomizer=randomizer)
     while True:
-        job = connection.execute("SELECT * FROM discovery_jobs WHERE run_id = ? AND status IN ('pending','retryable_failed') AND next_attempt_at <= ? ORDER BY created_at, job_id LIMIT 1", [run, _now()]).fetchone()
+        job = connection.execute("SELECT * FROM discovery_jobs WHERE run_id = ? AND status IN ('pending','retryable_failed') AND next_attempt_at <= ? ORDER BY CASE WHEN endpoint = '/api/get/explored-contracts' THEN 0 ELSE 1 END, try_cast(json_extract_string(params_json, '$.page') AS INTEGER), created_at, job_id LIMIT 1", [run, _now()]).fetchone()
         if not job:
             next_ready = connection.execute("SELECT min(next_attempt_at) FROM discovery_jobs WHERE run_id = ? AND status IN ('pending','retryable_failed')", [run]).fetchone()[0]
             if next_ready is None:
