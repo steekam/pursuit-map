@@ -20,6 +20,10 @@ Date: 2026-08-24
 - The first promotion child later completed with 1,481 validated rows.
 - The remaining promotion child completed with 1,630 validated rows.
 - Final combined materialization: 16,710 rows and 16,710 unique OCIDs.
+- Financial-year Excel capture run: `contract-export-20260825T001259400434Z-5501335abfb5`.
+- The capture stored 11 raw workbooks and 140,938 export rows.
+- Exact tender-reference overlap with existing validated enrichment: 1,974 rows and 1,728 OCIDs.
+- Accepted canonical additions from Excel: 0.
 
 ## Decisions
 
@@ -35,3 +39,4 @@ Date: 2026-08-24
 - A successful list response proves candidate mapping presence. It does not prove detail validity.
 - The source returned rate-limit responses during promotion. The remaining sample requires controlled resume.
 - The bounded discovery run recovered 3,111 previously unvalidated canonical OCIDs. Two discovery matches were already covered elsewhere. The remaining 242,422 baseline `mapping_pending` records need a new source-discovery strategy.
+- The Excel route has no OCID or tender ID. Its exact reference matches remain diagnostics until an OCID-bearing response validates each join. Current canonical coverage therefore remains 16,710 / 259,132 = 6.448%.

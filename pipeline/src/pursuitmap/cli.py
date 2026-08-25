@@ -33,6 +33,7 @@ from .mapping_discovery import promote as gap_promote
 from .mapping_discovery import combine as gap_combine
 from .enrichment_profile import profile as source_enrich_profile
 from .enrichment_analysis import analyze as source_enrich_analyze
+from .contract_export import capture as contract_export_capture
 
 
 def main() -> None:
@@ -131,6 +132,8 @@ def main() -> None:
     combine_parser.add_argument("--child-run-id", required=True)
     combine_parser.add_argument("--baseline-run-id")
     combine_parser.add_argument("--additional-child-run-id", action="append", default=[])
+    export_parser = durable_subparsers.add_parser("contract-export")
+    export_parser.add_argument("country", choices=["ke"])
 
     materialize_parser = commands.add_parser("materialize")
     materialize_parser.add_argument("country", choices=["za"])
@@ -209,6 +212,8 @@ def main() -> None:
             result = gap_promote(args.discovery_run_id, country=args.country, sample_per_cohort=args.sample_per_cohort, all_mappings=args.all_mappings)
         elif args.source_enrich_action == "combine":
             result = gap_combine(args.child_run_id, country=args.country, baseline_run=args.baseline_run_id, additional_child_runs=tuple(args.additional_child_run_id))
+        elif args.source_enrich_action == "contract-export":
+            result = contract_export_capture(args.country)
         else:
             result = source_enrich_report(args.run_id, country=args.country)
     elif args.command in {"report", "profile"}:
