@@ -11,7 +11,7 @@ from typing import Callable
 
 import duckdb
 
-from .durable_source_enrichment import BASE_URL, EngineConfig, RateLimiter, _cache_connection, _cache_lookup, _cache_store, _create_sequences, _fetch, _insert_job as _insert_detail_job, _now, _create_ledger as _create_detail_ledger, classify_status, execute as execute_detail, load_config
+from .durable_source_enrichment import BASE_URL, EngineConfig, RateLimiter, _cache_connection, _cache_lookup, _cache_store, _create_sequences, _fetch, _insert_job as _insert_detail_job, _now, _create_ledger as _create_detail_ledger, classify_status, execute as execute_detail, load_config, parse_retry_after
 from .paths import canonical_root, country_paths
 from .provenance import run_id, sha256_file, source_hash, utc_now
 
@@ -340,8 +340,19 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
                 continue
             retryable, error_class = classify_status(status, None, config.retry_statuses)
             if retryable and attempts < config.max_attempts:
-                delay = min(config.max_backoff_seconds, 2 ** attempts) + randomizer() * config.jitter_seconds
-                connection.execute("UPDATE discovery_jobs SET status='retryable_failed', next_attempt_at=?, http_status=?, error_class=?, error_message=?, response_hash=?, response_path=?, updated_at=? WHERE job_id=?", [_now() + delay, status, error_class, "retryable HTTP response", digest, path, utc_now(), job_id])
+                if status == 429:
+                    limiter.consecutive_429 += 1
+                    limiter.slow_down()
+                delay = parse_retry_after(headers.get("Retry-After")) or min(config.max_backoff_seconds, 2 ** attempts)
+                if status == 429 and limiter.consecutive_429 >= config.circuit_breaker_429_count:
+                    delay = max(delay, config.circuit_breaker_pause_seconds)
+                    limiter.circuit_open = True
+                delay = min(config.max_backoff_seconds, delay) + randomizer() * config.jitter_seconds
+                sleep(delay)
+                if limiter.circuit_open:
+                    limiter.recover_after_circuit()
+                    limiter.circuit_open = False
+                connection.execute("UPDATE discovery_jobs SET status='retryable_failed', next_attempt_at=?, http_status=?, error_class=?, error_message=?, response_hash=?, response_path=?, updated_at=? WHERE job_id=?", [_now(), status, error_class, "retryable HTTP response", digest, path, utc_now(), job_id])
                 _record_event(connection, job_id, attempts, "retryable_failed", wait, status, True, error_class, "retryable HTTP response", digest)
                 continue
             connection.execute("UPDATE discovery_jobs SET status='permanent_failed', http_status=?, error_class=?, error_message=?, response_hash=?, response_path=?, updated_at=? WHERE job_id=?", [status, error_class, "permanent HTTP response", digest, path, utc_now(), job_id])

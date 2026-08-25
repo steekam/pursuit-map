@@ -69,6 +69,24 @@ def test_gap_execute_deduplicates_and_enqueues_next_page(monkeypatch, tmp_path):
     connection.close()
 
 
+def test_gap_execute_honors_retry_after(monkeypatch, tmp_path):
+    roots = _source_fixture(monkeypatch, tmp_path)
+    planned = discovery.plan("source-run", country="ke", from_year=2025, to_year=2025, max_jobs=1)
+    payload = json.dumps({"data": [], "current_page": 1, "last_page": 1}).encode()
+    responses = iter([
+        (429, {"Retry-After": "8", "Content-Type": "application/json"}, b"rate limited"),
+        (200, {"Content-Type": "application/json"}, payload),
+    ])
+    sleeps = []
+    monkeypatch.setattr(discovery, "_fetch", lambda url, params, timeout: next(responses))
+    result = discovery.execute(planned["run_id"], country="ke", sleep=sleeps.append, randomizer=lambda: 0.0)
+    connection = duckdb.connect(str(roots.enriched / planned["run_id"] / "ledger.duckdb"), read_only=True)
+    assert result["job_counts"]["succeeded"] == 1
+    assert sleeps[0] == 8.0
+    assert connection.execute("SELECT attempts, status FROM discovery_jobs").fetchone() == (2, "succeeded")
+    connection.close()
+
+
 def test_promote_selects_one_mapping_per_ocid(monkeypatch, tmp_path):
     roots = _source_fixture(monkeypatch, tmp_path)
     discovery_run = "mapping-discovery-fixture"

@@ -34,6 +34,13 @@ def test_retry_classification():
     assert engine.classify_status(None, TimeoutError(), (429,))[0] is True
 
 
+def test_parse_retry_after_supports_seconds_and_http_dates():
+    assert engine.parse_retry_after("8") == 8.0
+    now = engine.datetime(2026, 8, 25, 12, 0, tzinfo=engine.UTC)
+    assert engine.parse_retry_after("Tue, 25 Aug 2026 12:00:08 GMT", now=now) == 8.0
+    assert engine.parse_retry_after("invalid") is None
+
+
 def test_detail_batch_reports_uniform_network_failure(monkeypatch, tmp_path):
     connection = duckdb.connect()
     for table, definition in engine.LEDGER_SCHEMA.items():

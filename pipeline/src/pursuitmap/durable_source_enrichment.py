@@ -15,6 +15,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Callable
 
@@ -248,12 +249,36 @@ def plan(country: str = "ke", *, limit: int = 25, config_path: Path | None = Non
 def _fetch(url: str, params: dict, timeout: int) -> tuple[int, dict, bytes]:
     query = urllib.parse.urlencode(params) if params else ""
     request_url = url + ("?" + query if query else "")
-    request = urllib.request.Request(request_url, headers={"User-Agent": "PursuitMap/0.1 durable-source-enrichment", "Accept": "application/json"})
+    request = urllib.request.Request(
+        request_url,
+        headers={
+            "User-Agent": "PursuitMap/0.1 durable-source-enrichment",
+            "Accept": "application/json, text/plain, */*",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": f"{BASE_URL}/contracts",
+        },
+    )
     try:
         with _IPV4_OPENER.open(request, timeout=timeout) as response:
             return response.status, dict(response.headers), response.read()
     except urllib.error.HTTPError as error:
         return error.code, dict(error.headers), error.read()
+
+
+def parse_retry_after(value: str | None, *, now: datetime | None = None) -> float | None:
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        current = now or datetime.now(UTC)
+        return max(0.0, (retry_at - current).total_seconds())
 
 
 def _save_response(connection, run: str, job_id: str, url: str, status: int, headers: dict, payload: bytes, response_root: Path) -> tuple[str, str]:
