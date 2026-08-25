@@ -54,6 +54,14 @@ def _cache_connection(roots) -> duckdb.DuckDBPyConnection:
     return cache
 
 
+def _write_progress(connection: duckdb.DuckDBPyConnection, output_root: Path, run_id: str, phase: str) -> None:
+    counts = {row[0]: row[1] for row in connection.execute("SELECT status,count(*) FROM request_jobs WHERE run_id=? GROUP BY 1", [run_id]).fetchall()}
+    value = {"run_id": run_id, "phase": phase, "updated_at": utc_now(), "job_counts": counts, "materialization": str(output_root / "sa_api_tender_details.parquet")}
+    temporary = output_root / "progress.json.tmp"
+    temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(output_root / "progress.json")
+
+
 def plan(*, limit: int = 25) -> dict:
     ensure_data_dirs("za")
     roots = country_paths("za")
@@ -122,6 +130,7 @@ def run(run_id: str, *, timeout: int = 30, rate: float = 1.0, jitter: float = 1.
     source_sha = connection.execute("SELECT source_snapshot_sha256 FROM run_metadata WHERE run_id=?", [run_id]).fetchone()[0]
     connection.execute("UPDATE request_jobs SET status='pending', updated_at=? WHERE run_id=? AND status='running'", [utc_now(), run_id])
     connection.execute("UPDATE run_metadata SET status='running' WHERE run_id=?", [run_id])
+    _write_progress(connection, output_root, run_id, "running")
     next_at = 0.0
     while True:
         job = connection.execute("SELECT job_id, ocid, url, attempts FROM request_jobs WHERE run_id=? AND status IN ('pending','retryable_failed') ORDER BY ocid LIMIT 1", [run_id]).fetchone()
@@ -166,11 +175,13 @@ def run(run_id: str, *, timeout: int = 30, rate: float = 1.0, jitter: float = 1.
             state = "retryable_failed" if attempt < max_attempts else "permanent_failed"
             connection.execute("UPDATE request_jobs SET status=?, error_class=?, error_message=?, updated_at=? WHERE job_id=?", [state, type(error).__name__, str(error), utc_now(), job_id])
             connection.execute("INSERT INTO request_events VALUES (nextval('event_seq'), ?, ?, ?, NULL, ?, ?, ?, NULL, ?)", [job_id, attempt, state, state == "retryable_failed", type(error).__name__, str(error), utc_now()])
+        _write_progress(connection, output_root, run_id, "running")
     materialized = _materialize(connection, run_id, output_root, source_sha)
     counts = {row[0]: row[1] for row in connection.execute("SELECT status,count(*) FROM request_jobs WHERE run_id=? GROUP BY 1", [run_id]).fetchall()}
     report = {"run_id": run_id, "source_snapshot_sha256": source_sha, "job_counts": counts, "accepted_rows": materialized["rows"], "field_coverage": materialized["field_coverage"], "cache_hits": connection.execute("SELECT count(*) FROM request_jobs WHERE run_id=? AND cache_hit", [run_id]).fetchone()[0], "output_root": str(output_root), "status": "pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn"}
     (output_root / "sa_api_enrichment_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     connection.execute("UPDATE run_metadata SET status=?, finished_at=? WHERE run_id=?", [report["status"], utc_now(), run_id])
+    _write_progress(connection, output_root, run_id, report["status"])
     write_run_manifest("sa-api-enrich", source_sha, {"report": report, "output_root": str(output_root)}, run=run_id, working_root=roots.working)
     cache.close()
     connection.close()
