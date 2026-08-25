@@ -1,6 +1,6 @@
 import json
 
-from pursuitmap.document_analysis import analyze_classification
+from pursuitmap.document_analysis import analyze_classification, compare_classifications
 
 
 def test_classification_analysis_is_deterministic(tmp_path):
@@ -22,3 +22,15 @@ def test_classification_analysis_is_deterministic(tmp_path):
     assert first["cluster_count"] == second["cluster_count"]
     assert first["role_counts"] == {"tender_notice": 2, "supplier_registration": 1}
     assert (run_root / "classification" / "document_classification.jsonl").exists()
+
+
+def test_classification_comparison_reports_role_changes(tmp_path):
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    (left / "batch-01.jsonl").write_text(json.dumps({"document_hash": "a", "document_role": "form", "confidence": "medium", "likely_standard_template": False}) + "\n")
+    (right / "batch-01.jsonl").write_text(json.dumps({"document_hash": "a", "document_role": "tender_document", "confidence": "high", "likely_standard_template": True}) + "\n")
+    report = compare_classifications(left, right, tmp_path / "comparison.json")
+    assert report["role_agreement_rate"] == 0
+    assert report["role_changes"][0]["document_hash"] == "a"

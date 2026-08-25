@@ -26,7 +26,7 @@ from .document_download import plan as document_plan
 from .document_download import run as document_run
 from .document_extraction import parse_run as document_parse
 from .document_features import extract_features, report as document_feature_report
-from .document_analysis import analyze_classification
+from .document_analysis import analyze_classification, compare_classifications
 from .source_enrichment_benchmark import benchmark as source_enrich_benchmark
 from .mapping_discovery import execute as gap_execute
 from .mapping_discovery import partition_plan, partition_report
@@ -203,6 +203,10 @@ def main() -> None:
     documents_analysis.add_argument("--run-root", type=Path, required=True)
     documents_analysis.add_argument("--classification-dir", type=Path, required=True)
     documents_analysis.add_argument("--threshold", type=float, default=0.45)
+    documents_compare = documents_subparsers.add_parser("classify-compare")
+    documents_compare.add_argument("--left-dir", type=Path, required=True)
+    documents_compare.add_argument("--right-dir", type=Path, required=True)
+    documents_compare.add_argument("--output-path", type=Path, required=True)
     documents_report = documents_subparsers.add_parser("report")
     documents_report.add_argument("--run-root", type=Path, required=True)
 
@@ -285,6 +289,8 @@ def main() -> None:
             result = extract_features(args.run_root, args.rules_path)
         elif args.documents_action == "classify-analyze":
             result = analyze_classification(args.run_root, args.classification_dir, threshold=args.threshold)
+        elif args.documents_action == "classify-compare":
+            result = compare_classifications(args.left_dir, args.right_dir, args.output_path)
         else:
             result = document_feature_report(args.run_root)
     else:

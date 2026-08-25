@@ -114,3 +114,44 @@ def analyze_classification(run_root: Path, classification_dir: Path, *, threshol
     report = {"input_documents": len(records), "role_counts": dict(Counter(record["document_role"] for record in records)), "confidence_counts": dict(Counter(record["confidence"] for record in records)), "standardized_count": sum(record.get("likely_standard_template") is True for record in records), "cluster_count": len(cluster_sizes), "cluster_sizes": dict(sorted(cluster_sizes.items())), "similarity_threshold": threshold, "similarity_edges": len(similarities), "role_cohesion": role_cohesion, "role_feature_coverage": [{"document_role": role, "feature_key": feature, "occurrences": occurrences, "documents": documents} for role, feature, occurrences, documents in feature_rows], "outputs": {"classification": str(output_dir / "document_classification.jsonl"), "similarity_edges": str(output_dir / "document_similarity_edges.jsonl")}}
     (output_dir / "document_classification_analysis.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report
+
+
+def _load_classification(directory: Path) -> dict[str, dict]:
+    rows = {}
+    for path in sorted(directory.glob("batch-*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                rows[row["document_hash"]] = row
+    return rows
+
+
+def compare_classifications(left_dir: Path, right_dir: Path, output_path: Path) -> dict:
+    left, right = _load_classification(left_dir), _load_classification(right_dir)
+    if set(left) != set(right):
+        raise ValueError("classification passes do not cover the same document hashes")
+    confusion = Counter()
+    changes = []
+    confidence_changes = Counter()
+    standardization_changes = Counter()
+    for document_hash in sorted(left):
+        left_role, right_role = left[document_hash]["document_role"], right[document_hash]["document_role"]
+        confusion[(left_role, right_role)] += 1
+        if left_role != right_role:
+            changes.append({"document_hash": document_hash, "left_role": left_role, "right_role": right_role, "left_evidence": left[document_hash].get("role_evidence", []), "right_evidence": right[document_hash].get("role_evidence", [])})
+        confidence_changes[(left[document_hash].get("confidence"), right[document_hash].get("confidence"))] += 1
+        standardization_changes[(bool(left[document_hash].get("likely_standard_template")), bool(right[document_hash].get("likely_standard_template")))] += 1
+    report = {
+        "documents": len(left),
+        "role_agreement_count": sum(value for (left_role, right_role), value in confusion.items() if left_role == right_role),
+        "role_agreement_rate": sum(value for (left_role, right_role), value in confusion.items() if left_role == right_role) / len(left),
+        "role_confusion": [{"left_role": left_role, "right_role": right_role, "count": count} for (left_role, right_role), count in sorted(confusion.items())],
+        "role_changes": changes,
+        "confidence_changes": [{"left": left_value, "right": right_value, "count": count} for (left_value, right_value), count in sorted(confidence_changes.items())],
+        "standardization_changes": [{"left": left_value, "right": right_value, "count": count} for (left_value, right_value), count in sorted(standardization_changes.items())],
+        "left_directory": str(left_dir),
+        "right_directory": str(right_dir),
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    return report
