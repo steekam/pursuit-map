@@ -75,4 +75,12 @@ The `/api/get/explored-contracts` route returned data for all 11 financial-year 
 The existing Excel capture remains the broader contract-data source: 11 workbooks, 140,938 rows, and 1,728 exact references to 1,728 already validated OCIDs. The workbooks contain contract numbers, amounts, award and contract dates, buyer names, supplier names, procurement fields, and tender references. They contain no OCID or PPIP tender ID. Excel joins remain diagnostic until an OCID-bearing response validates them.
 
 The next efficient step is to promote a deterministic sample from the 70 archive candidates and the 419 partition candidates. Keep the two source cohorts separate during validation.
+
+## 2026-08-25 — document acquisition planning
+
+The validated combined run contains 50,292 unique attachment URLs across 16,710 records. The downloader now supports a request limit and writes a `progress.json` sidecar after each job.
+
+A 100-URL pilot was started at one request per second and stopped after 21 processed attempts because every attempt failed with DNS error `URLError: [Errno 8] nodename nor servname provided, or not known`. The pilot captured 0 files. The document ledger remains resumable with 50,279 pending jobs, 12 permanent failures, and 1 retryable failure.
+
+The failure blocks network acquisition in the current environment. It does not establish that the document URLs are invalid. Resume the pilot after DNS access is restored, then evaluate content-type and binary success rates before a larger batch.
 - The JSON continuation batch is a zero-yield network-outage result. Its failures remain separate from source-coverage conclusions.

@@ -184,6 +184,7 @@ def main() -> None:
     documents_run.add_argument("--run-root", type=Path, required=True)
     documents_run.add_argument("--timeout", type=int, default=60)
     documents_run.add_argument("--rate", type=float, default=1.0)
+    documents_run.add_argument("--limit", type=int)
     documents_extract = documents_subparsers.add_parser("extract")
     documents_extract.add_argument("--run-root", type=Path, required=True)
     documents_extract.add_argument("--rules-path", type=Path, required=True)
@@ -256,7 +257,7 @@ def main() -> None:
         if args.documents_action == "plan":
             result = document_plan(args.input_parquet, args.output_root, source_run_id=args.source_run_id, source_snapshot_sha256=args.source_snapshot_sha256, base_url=args.base_url)
         elif args.documents_action == "run":
-            result = document_run(args.run_root, timeout=args.timeout, rate_per_second=args.rate)
+            result = document_run(args.run_root, timeout=args.timeout, rate_per_second=args.rate, limit=args.limit)
         elif args.documents_action == "extract":
             result = extract_features(args.run_root, args.rules_path)
         else:

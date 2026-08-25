@@ -110,17 +110,30 @@ def _valid_content_type(content_type: str, url: str, payload: bytes) -> bool:
     return bool(payload)
 
 
-def run(run_root: Path, *, timeout: int = 60, max_attempts: int = 4, rate_per_second: float = 1.0, jitter_seconds: float = 1.0, sleep: Callable[[float], None] = time.sleep, randomizer: Callable[[], float] = random.random) -> dict:
+def _write_progress(connection: duckdb.DuckDBPyConnection, run_root: Path, *, phase: str, limit: int | None) -> None:
+    counts = {str(row[0]): row[1] for row in connection.execute("SELECT status, count(*) FROM download_jobs GROUP BY 1").fetchall()}
+    value = {"run_id": run_root.name, "phase": phase, "updated_at": utc_now(), "limit": limit, "job_counts": counts, "downloaded_files": connection.execute("SELECT count(*) FROM download_jobs WHERE status='succeeded'").fetchone()[0], "total_jobs": connection.execute("SELECT count(*) FROM download_jobs").fetchone()[0]}
+    temporary = run_root / "progress.json.tmp"
+    temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(run_root / "progress.json")
+
+
+def run(run_root: Path, *, timeout: int = 60, max_attempts: int = 4, rate_per_second: float = 1.0, jitter_seconds: float = 1.0, limit: int | None = None, sleep: Callable[[float], None] = time.sleep, randomizer: Callable[[], float] = random.random) -> dict:
     ledger_path = run_root / "ledger.duckdb"
     connection = duckdb.connect(str(ledger_path))
     _create_ledger(connection)
     (run_root / "files").mkdir(exist_ok=True)
     next_request_at = 0.0
+    processed = 0
+    _write_progress(connection, run_root, phase="running", limit=limit)
     while True:
+        if limit is not None and processed >= limit:
+            break
         job = connection.execute("SELECT job_id, normalized_url, status, attempts FROM download_jobs WHERE status IN ('pending', 'retryable_failed') ORDER BY job_id LIMIT 1").fetchone()
         if job is None:
             break
         job_id, url, _, attempts = job
+        processed += 1
         attempt = attempts + 1
         delay = max(0.0, next_request_at - time.monotonic()) + randomizer() * jitter_seconds
         if delay:
@@ -145,6 +158,7 @@ def run(run_root: Path, *, timeout: int = 60, max_attempts: int = 4, rate_per_se
                 (run_root / "files" / f"{digest}.input.json").write_text(json.dumps(input_manifest, indent=2) + "\n", encoding="utf-8")
                 connection.execute("UPDATE download_jobs SET status = 'succeeded', http_status = ?, content_type = ?, response_hash = ?, response_path = ?, validation_status = 'pass', updated_at = ? WHERE job_id = ?", [status, content_type, digest, str(path), utc_now(), job_id])
                 connection.execute("INSERT INTO download_events VALUES (nextval('download_event_seq'), ?, ?, 'succeeded', ?, ?, NULL, NULL, ?)", [job_id, attempt, status, digest, utc_now()])
+                _write_progress(connection, run_root, phase="running", limit=limit)
                 continue
             retryable = status in RETRY_STATUSES and attempt < max_attempts
             state = "retryable_failed" if retryable else "permanent_failed"
@@ -154,6 +168,7 @@ def run(run_root: Path, *, timeout: int = 60, max_attempts: int = 4, rate_per_se
             if retryable:
                 delay = min(600, 2 ** attempt) + randomizer()
                 sleep(delay)
+            _write_progress(connection, run_root, phase="running", limit=limit)
         except Exception as error:
             retryable = attempt < max_attempts
             state = "retryable_failed" if retryable else "permanent_failed"
@@ -161,8 +176,10 @@ def run(run_root: Path, *, timeout: int = 60, max_attempts: int = 4, rate_per_se
             connection.execute("INSERT INTO download_events VALUES (nextval('download_event_seq'), ?, ?, ?, NULL, NULL, ?, ?, ?)", [job_id, attempt, state, error.__class__.__name__, str(error), utc_now()])
             if retryable:
                 sleep(min(600, 2 ** attempt) + randomizer())
+            _write_progress(connection, run_root, phase="running", limit=limit)
     counts = {row[0]: row[1] for row in connection.execute("SELECT status, count(*) FROM download_jobs GROUP BY 1").fetchall()}
     report = {"run_id": run_root.name, "job_counts": counts, "downloaded_files": connection.execute("SELECT count(*) FROM download_jobs WHERE status = 'succeeded'").fetchone()[0], "unique_response_hashes": connection.execute("SELECT count(DISTINCT response_hash) FROM download_jobs WHERE response_hash IS NOT NULL").fetchone()[0], "duplicate_url_jobs": connection.execute("SELECT count(*) - count(DISTINCT normalized_url) FROM download_jobs").fetchone()[0], "ledger": str(ledger_path), "output_root": str(run_root), "status": "pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn"}
+    _write_progress(connection, run_root, phase="complete" if limit is None or not counts.get("pending") else "paused_limit", limit=limit)
     (run_root / "document_download_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     connection.close()
     return report
