@@ -316,14 +316,16 @@ def extract_features(run_root: Path, rules_path: Path) -> dict:
         "ocr_derived_occurrences": sum(1 for row in occurrences if row["ocr_derived"] is True),
         "duplicate_content": {"unique_content_hashes": len(reference_counts), "referenced_more_than_once": sum(1 for count in reference_counts.values() if count > 1), "max_references": max(reference_counts.values(), default=0)},
         "parser_versions": parser_versions,
+        "unparsed_documents": len(input_manifests) - len(summaries),
         "ocr_status": "unavailable_in_extraction_manifest",
         "source_limitations": [
             "Document-derived observations do not overwrite canonical OCDS values.",
             "OCR provenance is unavailable in the captured extraction manifests; ocr_derived remains unknown.",
             "Rule matches are lexical observations and require human review before evaluation claims.",
+            "Feature materialization is incomplete while captured binaries lack Docling manifests.",
         ],
         "outputs": {name: str(feature_root / f"{name}.parquet") for name in ("document_feature_occurrences", "document_feature_summary", "document_feature_links")},
-        "status": "pass",
+        "status": "pass" if len(summaries) == len(input_manifests) else "warn",
     }
     (run_root / "document_feature_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     (run_root / "document_feature_report.md").write_text(render_report(report), encoding="utf-8")
@@ -333,7 +335,7 @@ def extract_features(run_root: Path, rules_path: Path) -> dict:
 
 def render_report(report: dict[str, Any]) -> str:
     lines = ["# Document feature extraction report", "", f"Status: `{report['status']}`", f"Rule version: `{report['rule_version']}`", "", "## Counts", ""]
-    lines.extend([f"- Input documents: {report['input_documents']}", f"- Documents with features: {report['documents_with_features']}", f"- Evidence occurrences: {report['occurrence_count']}", f"- Source links: {report['link_count']}", f"- Conflicts: {report['conflict_count']}", f"- Ambiguities: {report['ambiguity_count']}", "", "## Feature counts", ""])
+    lines.extend([f"- Input documents: {report['input_documents']}", f"- Documents with features: {report['documents_with_features']}", f"- Unparsed documents: {report['unparsed_documents']}", f"- Evidence occurrences: {report['occurrence_count']}", f"- Source links: {report['link_count']}", f"- Conflicts: {report['conflict_count']}", f"- Ambiguities: {report['ambiguity_count']}", "", "## Feature counts", ""])
     lines.extend(f"- `{key}`: {value}" for key, value in sorted(report["feature_counts"].items()))
     lines.extend(["", "## Quality", "", f"- Evidence completeness: {report['evidence_completeness']['complete_occurrences']}/{report['evidence_completeness']['total_occurrences']} ({report['evidence_completeness']['rate']:.1%})", f"- OCR-derived occurrences: {report['ocr_derived_occurrences']}", f"- Unique content hashes: {report['duplicate_content']['unique_content_hashes']}", f"- Content hashes referenced more than once: {report['duplicate_content']['referenced_more_than_once']}", "", "## Limitations", ""])
     lines.extend(f"- {limitation}" for limitation in report["source_limitations"])
