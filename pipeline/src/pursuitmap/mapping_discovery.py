@@ -292,7 +292,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     if not metadata:
         raise FileNotFoundError(f"Discovery run not found: {run}")
     source_run, _, max_jobs = metadata
-    connection.execute("UPDATE discovery_jobs SET status='retryable_failed', attempts=0, next_attempt_at=0, error_message=NULL, updated_at=? WHERE run_id=? AND status='permanent_failed' AND error_class IN ('TimeoutError', 'URLError', 'http_408', 'http_425', 'http_429', 'http_500', 'http_502', 'http_503', 'http_504')", [utc_now(), run])
+    connection.execute("UPDATE discovery_jobs SET status='retryable_failed', attempts=0, next_attempt_at=0, error_message=NULL, updated_at=? WHERE run_id=? AND status IN ('permanent_failed', 'running') AND error_class IN ('TimeoutError', 'URLError', 'http_408', 'http_425', 'http_429', 'http_500', 'http_502', 'http_503', 'http_504')", [utc_now(), run])
     _, validated, canonical_root_path, _ = _canonical_context(source_run, country)
     canonical = set(row[0] for row in connection.execute("SELECT ocid FROM read_parquet(?) WHERE ocid IS NOT NULL", [str(canonical_root_path / "releases.parquet")]).fetchall())
     seen_mapping_keys = set(row[0] for row in connection.execute("SELECT mapping_key FROM discovery_mappings WHERE run_id = ?", [run]).fetchall())
