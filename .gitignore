@@ -10,6 +10,7 @@ data/working/*
 data/parquet/*
 data/materialized/*
 data/enriched/*
+analysis/document-classification/*
 !data/raw/.gitkeep
 !data/working/.gitkeep
 !data/parquet/.gitkeep
