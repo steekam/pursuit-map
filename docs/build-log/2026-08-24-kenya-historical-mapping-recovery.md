@@ -83,4 +83,12 @@ The validated combined run contains 50,292 unique attachment URLs across 16,710 
 A 100-URL pilot was started at one request per second and stopped after 21 processed attempts because every attempt failed with DNS error `URLError: [Errno 8] nodename nor servname provided, or not known`. The pilot captured 0 files. The document ledger remains resumable with 50,279 pending jobs, 12 permanent failures, and 1 retryable failure.
 
 The failure blocks network acquisition in the current environment. It does not establish that the document URLs are invalid. Resume the pilot after DNS access is restored, then evaluate content-type and binary success rates before a larger batch.
+
+## 2026-08-25 — DNS root cause and recovery
+
+The failure was isolated to the Codex sandbox runtime. The sandbox reported `No DNS configuration available`; Python and `curl` returned `nodename nor servname provided, or not known`. A network-enabled execution resolved `tenders.go.ke` through `192.168.100.1` to `197.254.120.51`, and HTTPS returned `200 OK`.
+
+The project now provides `pursuitmap network-check`. Live source-enrichment and document-download CLI actions run the preflight before network requests. The preflight fails with an explicit network-enabled-execution message when DNS is unavailable.
+
+After network-enabled resume, detail validation accepted 26 of 69 archive candidates before the portal rate-limit circuit paused the run. Six HTTP 429 responses were recorded. The document pilot captured 96 files, with 13 permanent failures and 50,183 pending jobs after the 100-request batch. One response hash was shared by two URLs.
 - The JSON continuation batch is a zero-yield network-outage result. Its failures remain separate from source-coverage conclusions.

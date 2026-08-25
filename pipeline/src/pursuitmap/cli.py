@@ -35,6 +35,7 @@ from .mapping_discovery import combine as gap_combine
 from .enrichment_profile import profile as source_enrich_profile
 from .enrichment_analysis import analyze as source_enrich_analyze
 from .contract_export import capture as contract_export_capture
+from .network_preflight import check as network_check
 
 
 def main() -> None:
@@ -59,6 +60,9 @@ def main() -> None:
 
     enrich_parser = commands.add_parser("enrich")
     enrich_parser.add_argument("country", choices=["za", "ke"])
+
+    network_parser = commands.add_parser("network-check")
+    network_parser.add_argument("--url", default="https://tenders.go.ke")
 
     source_enrich_parser = commands.add_parser("enrich-source")
     source_enrich_parser.add_argument("country", choices=["ke"])
@@ -192,6 +196,12 @@ def main() -> None:
     documents_report.add_argument("--run-root", type=Path, required=True)
 
     args = parser.parse_args()
+    if args.command == "network-check":
+        print(json.dumps(network_check(args.url), indent=2))
+        return
+    live_source_actions = {"run", "resume", "gap-run", "gap-resume", "partition-run", "partition-resume", "supervise"}
+    if args.command == "enrich-source" or args.command == "documents" and args.documents_action == "run" or args.command == "source-enrich" and args.source_enrich_action in live_source_actions or args.command == "source-enrich" and args.source_enrich_action == "contract-export":
+        network_check()
     if args.command == "ingest":
         result = ingest(args.url or None, country=args.country, force=args.force, local_path=args.local_path)
     elif args.command == "normalize":
