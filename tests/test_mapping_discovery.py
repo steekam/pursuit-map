@@ -93,6 +93,8 @@ def test_gap_execute_deduplicates_and_enqueues_next_page(monkeypatch, tmp_path):
     assert connection.execute("SELECT duplicate_count FROM discovery_mappings").fetchone()[0] == 1
     assert connection.execute("SELECT count(*) FROM discovery_jobs WHERE status = 'pending'").fetchone()[0] == 0
     connection.close()
+    progress = json.loads((roots.enriched / planned["run_id"] / "progress.json").read_text())
+    assert progress["job_counts"]["succeeded"] == 1
 
 
 def test_gap_execute_honors_retry_after(monkeypatch, tmp_path):

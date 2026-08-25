@@ -373,6 +373,21 @@ def _record_event(connection, job_id: str, attempt: int, state: str, wait: float
     connection.execute("INSERT INTO discovery_events VALUES (nextval('discovery_event_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [job_id, attempt, state, wait, status, retryable, error_class, message, digest, utc_now()])
 
 
+def _write_progress(connection, output_root: Path, run: str) -> None:
+    counts = {str(row[0]): row[1] for row in connection.execute("SELECT status, count(*) FROM discovery_jobs WHERE run_id=? GROUP BY status", [run]).fetchall()}
+    value = {
+        "run_id": run,
+        "generated_at": utc_now(),
+        "job_counts": counts,
+        "responses": connection.execute("SELECT count(*) FROM discovery_responses WHERE run_id=?", [run]).fetchone()[0],
+        "mappings": connection.execute("SELECT count(*) FROM discovery_mappings WHERE run_id=?", [run]).fetchone()[0],
+        "events": connection.execute("SELECT count(*) FROM discovery_events WHERE job_id IN (SELECT job_id FROM discovery_jobs WHERE run_id=?)", [run]).fetchone()[0],
+    }
+    temporary = output_root / "progress.json.tmp"
+    temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(output_root / "progress.json")
+
+
 def _process_mapping_rows(connection, run: str, job: tuple, payload: bytes, digest: str, canonical: set[str], validated: set[str], seen_keys: set[str] | None = None) -> int:
     records, _ = _extract_records(payload)
     endpoint_family = job[2]
@@ -449,6 +464,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
     response_root = output_root / "responses"
     response_root.mkdir(exist_ok=True)
     limiter = RateLimiter(config.refill_rate_per_second, config.jitter_seconds, sleeper=sleep, randomizer=randomizer)
+    _write_progress(connection, output_root, run)
     while True:
         job = connection.execute("SELECT * FROM discovery_jobs WHERE run_id = ? AND status IN ('pending','retryable_failed') AND next_attempt_at <= ? ORDER BY CASE WHEN endpoint = '/api/get/explored-contracts' THEN 0 ELSE 1 END, try_cast(json_extract_string(params_json, '$.page') AS INTEGER), created_at, job_id LIMIT 1", [run, _now()]).fetchone()
         if not job:
@@ -481,6 +497,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
                 _enqueue_next_page(connection, job, payload, max_jobs)
                 connection.execute("UPDATE discovery_jobs SET status='succeeded', http_status=200, response_hash=?, response_path=?, updated_at=? WHERE job_id=?", [digest, path, utc_now(), job_id])
                 _record_event(connection, job_id, attempts, "succeeded", wait, status, False, None, None, digest)
+                _write_progress(connection, output_root, run)
                 limiter.success()
                 continue
             retryable, error_class = classify_status(status, None, config.retry_statuses)
@@ -499,9 +516,11 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
                     limiter.circuit_open = False
                 connection.execute("UPDATE discovery_jobs SET status='retryable_failed', next_attempt_at=?, http_status=?, error_class=?, error_message=?, response_hash=?, response_path=?, updated_at=? WHERE job_id=?", [_now(), status, error_class, "retryable HTTP response", digest, path, utc_now(), job_id])
                 _record_event(connection, job_id, attempts, "retryable_failed", wait, status, True, error_class, "retryable HTTP response", digest)
+                _write_progress(connection, output_root, run)
                 continue
             connection.execute("UPDATE discovery_jobs SET status='permanent_failed', http_status=?, error_class=?, error_message=?, response_hash=?, response_path=?, updated_at=? WHERE job_id=?", [status, error_class, "permanent HTTP response", digest, path, utc_now(), job_id])
             _record_event(connection, job_id, attempts, "permanent_failed", wait, status, False, error_class, "permanent HTTP response", digest)
+            _write_progress(connection, output_root, run)
         except Exception as error:
             retryable, error_class = classify_status(None, error, config.retry_statuses)
             state = "retryable_failed" if retryable and attempts < config.max_attempts else "permanent_failed"
@@ -510,6 +529,7 @@ def execute(run: str, *, country: str = "ke", config_path: Path | None = None, s
             next_at = _now() + min(config.max_backoff_seconds, 2 ** attempts)
             connection.execute("UPDATE discovery_jobs SET status=?, next_attempt_at=?, error_class=?, error_message=?, updated_at=? WHERE job_id=?", [state, next_at, error_class, str(error), utc_now(), job_id])
             _record_event(connection, job_id, attempts, state, wait, None, state == "retryable_failed", error_class, str(error), None)
+            _write_progress(connection, output_root, run)
     counts = {row[0]: row[1] for row in connection.execute("SELECT status,count(*) FROM discovery_jobs WHERE run_id=? GROUP BY status", [run]).fetchall()}
     mapping_count = connection.execute("SELECT count(*) FROM discovery_mappings WHERE run_id=?", [run]).fetchone()[0]
     new_matches = connection.execute("SELECT count(*) FROM discovery_mappings WHERE run_id=? AND new_canonical_match", [run]).fetchone()[0]
