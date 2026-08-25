@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from pursuitmap.document_extraction import DocumentInput, extract_document
+from pursuitmap.document_extraction import DocumentInput, extract_document, parse_run
 
 
 def test_missing_document_fails_before_parser_import(tmp_path):
@@ -39,3 +39,41 @@ def test_extraction_is_content_addressed_and_records_provenance(monkeypatch, tmp
     assert (artifact_dir / "docling.json").exists()
     assert (artifact_dir / "document.md").read_text() == "# Fixture\n"
     assert json.loads((artifact_dir / "extraction_manifest.json").read_text())["source_url"] == "https://example.test/a.pdf"
+
+
+def test_parse_run_uses_one_converter_and_writes_progress(monkeypatch, tmp_path):
+    run_root = tmp_path / "run"
+    files = run_root / "files"
+    files.mkdir(parents=True)
+    source = files / "abc"
+    source.write_bytes(b"fixture")
+    (files / "abc.input.json").write_text(json.dumps({
+        "path": str(source), "source_url": "https://example.test/a.pdf",
+        "source_snapshot_sha256": "snapshot", "ocids": ["ocid"],
+        "release_ids": ["release"], "document_ids": ["doc"],
+    }))
+    created = 0
+
+    class FakeDocument:
+        def save_as_json(self, path):
+            open(path, "w", encoding="utf-8").write(json.dumps({"pages": []}))
+
+        def export_to_markdown(self):
+            return "# Fixture\n"
+
+    class FakeResult:
+        document = FakeDocument()
+
+    class FakeConverter:
+        def __init__(self):
+            nonlocal created
+            created += 1
+
+        def convert(self, path):
+            return FakeResult()
+
+    monkeypatch.setattr("pursuitmap.document_extraction._require_docling", lambda: FakeConverter)
+    value = parse_run(run_root)
+    assert value["total_parsed"] == 1
+    assert created == 1
+    assert json.loads((run_root / "document_extraction_progress.json").read_text())["status"] == "pass"

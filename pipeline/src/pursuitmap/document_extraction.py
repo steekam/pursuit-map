@@ -81,6 +81,35 @@ def extract_documents(documents: list[DocumentInput], output_dir: Path) -> list[
     return [_write_extraction(document, output_dir, converter) for document in documents]
 
 
+def parse_run(run_root: Path) -> dict:
+    """Parse captured content hashes once and record resumable progress."""
+    input_paths = sorted((run_root / "files").glob("*.input.json"))
+    output_dir = run_root / "extracted"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pending = []
+    skipped = 0
+    for input_path in input_paths:
+        metadata = json.loads(input_path.read_text(encoding="utf-8"))
+        document_hash = Path(metadata["path"]).name
+        if (output_dir / document_hash / "extraction_manifest.json").exists():
+            skipped += 1
+            continue
+        pending.append(DocumentInput(
+            path=Path(metadata["path"]),
+            source_url=metadata["source_url"],
+            source_snapshot_sha256=metadata.get("source_snapshot_sha256", "unknown"),
+            ocid="|".join(metadata.get("ocids") or []),
+            release_id="|".join(metadata.get("release_ids") or []),
+            document_id="|".join(metadata.get("document_ids") or []),
+        ))
+    progress = {"run_root": str(run_root), "input_documents": len(input_paths), "skipped": skipped, "pending": len(pending), "status": "running", "updated_at": utc_now()}
+    (run_root / "document_extraction_progress.json").write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
+    manifests = extract_documents(pending, output_dir) if pending else []
+    progress.update({"parsed": len(manifests), "total_parsed": skipped + len(manifests), "status": "pass", "updated_at": utc_now()})
+    (run_root / "document_extraction_progress.json").write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
+    return progress
+
+
 def write_input_manifest(document: DocumentInput, output_path: Path) -> Path:
     """Record a captured input before extraction begins."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
