@@ -1,0 +1,13 @@
+{
+  "source": "South African National Treasury eTenders OCDS API",
+  "source_version": "etenders-ocds-api-v1",
+  "api_version": "v1",
+  "base_url": "https://ocds-api.etenders.gov.za",
+  "detail_endpoint": "/api/OCDSReleases/release/{ocid}",
+  "request_timeout_seconds": 30,
+  "refill_rate_per_second": 1.0,
+  "jitter_seconds": 1.0,
+  "max_attempts": 6,
+  "max_backoff_seconds": 600,
+  "retry_statuses": [408, 425, 429, 500, 502, 503, 504]
+}

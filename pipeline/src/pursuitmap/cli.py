@@ -38,6 +38,7 @@ from .enrichment_profile import profile as source_enrich_profile
 from .enrichment_analysis import analyze as source_enrich_analyze
 from .contract_export import capture as contract_export_capture
 from .network_preflight import check as network_check
+from .sa_api_enrichment import plan as sa_api_plan, run as sa_api_run, report as sa_api_report
 
 
 def main() -> None:
@@ -65,6 +66,17 @@ def main() -> None:
 
     network_parser = commands.add_parser("network-check")
     network_parser.add_argument("--url", default="https://tenders.go.ke")
+
+    sa_api_parser = commands.add_parser("sa-api-enrich")
+    sa_api_subparsers = sa_api_parser.add_subparsers(dest="sa_api_action", required=True)
+    sa_api_plan_parser = sa_api_subparsers.add_parser("plan")
+    sa_api_plan_parser.add_argument("--limit", type=int, default=25)
+    sa_api_run_parser = sa_api_subparsers.add_parser("run")
+    sa_api_run_parser.add_argument("--run-id", required=True)
+    sa_api_run_parser.add_argument("--rate", type=float, default=1.0)
+    sa_api_run_parser.add_argument("--timeout", type=int, default=30)
+    sa_api_report_parser = sa_api_subparsers.add_parser("report")
+    sa_api_report_parser.add_argument("--run-id", required=True)
 
     source_enrich_parser = commands.add_parser("enrich-source")
     source_enrich_parser.add_argument("country", choices=["ke"])
@@ -213,6 +225,16 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "network-check":
         print(json.dumps(network_check(args.url), indent=2))
+        return
+    if args.command == "sa-api-enrich":
+        network_check("https://ocds-api.etenders.gov.za") if args.sa_api_action == "run" else None
+        if args.sa_api_action == "plan":
+            result = sa_api_plan(limit=args.limit)
+        elif args.sa_api_action == "run":
+            result = sa_api_run(args.run_id, rate=args.rate, timeout=args.timeout)
+        else:
+            result = sa_api_report(args.run_id)
+        print(json.dumps(result, indent=2, default=str))
         return
     live_source_actions = {"run", "resume", "gap-run", "gap-resume", "partition-run", "partition-resume", "supervise"}
     if args.command == "enrich-source" or args.command == "documents" and args.documents_action == "run" or args.command == "source-enrich" and args.source_enrich_action in live_source_actions or args.command == "source-enrich" and args.source_enrich_action == "contract-export":
