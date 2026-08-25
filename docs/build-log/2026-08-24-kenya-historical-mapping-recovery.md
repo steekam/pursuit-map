@@ -34,6 +34,7 @@ Date: 2026-08-24
 - The latest ordered retry cycle completed 3 pages, recorded 2 permanent timeout failures, and left 6 timeout pages retryable after the worker was stopped. Candidate mappings remained at 0 for this continuation run.
 - A bounded IPv4 probe of failed page 23 waited 60 seconds and received 0 bytes. A five-second confirmation returned curl timeout 28 with HTTP 000 and 0 bytes. A known-good page still returned HTTP 200 in 0.57 seconds. The timeout remains page-specific upstream behavior.
 - A route probe for failed page 23 with `perpage=5` also timed out after 20 seconds with 0 bytes. The timeout persisted after reducing the requested page size.
+- Browser validation reached the Contracts view, selected financial year 2020/2021, and rendered page 23 of 693 with contract records. The portal UI therefore has a working path for the page that timed out in the direct client. Request-header or request-sequence differences remain unverified.
 - The remaining retryable pages are preserved for a later portal-availability window. The latest report is `warn` because the queue is incomplete.
 
 ## Decisions
