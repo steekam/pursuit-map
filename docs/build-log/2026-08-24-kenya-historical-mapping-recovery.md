@@ -90,5 +90,5 @@ The failure was isolated to the Codex sandbox runtime. The sandbox reported `No 
 
 The project now provides `pursuitmap network-check`. Live source-enrichment and document-download CLI actions run the preflight before network requests. The preflight fails with an explicit network-enabled-execution message when DNS is unavailable.
 
-After network-enabled resume, detail validation accepted 26 of 69 archive candidates before the portal rate-limit circuit paused the run. Six HTTP 429 responses were recorded. The document pilot captured 96 files, with 13 permanent failures and 50,183 pending jobs after the 100-request batch. One response hash was shared by two URLs.
+After network-enabled resume, detail validation accepted 32 of 69 archive candidates before the portal rate-limit circuit paused the run. Ten HTTP 429 responses were recorded. The document pilot captured 96 files, with 13 permanent failures and 50,183 pending jobs after the 100-request batch. One response hash was shared by two URLs.
 - The JSON continuation batch is a zero-yield network-outage result. Its failures remain separate from source-coverage conclusions.
