@@ -37,7 +37,8 @@ Date: 2026-08-24
 - Browser validation reached the Contracts view, selected financial year 2020/2021, and rendered page 23 of 693 with contract records. The portal UI therefore has a working path for the page that timed out in the direct client. Request-header or request-sequence differences remain unverified.
 - Browser network capture later showed the page-23 request remained pending. Separate browser API calls returned HTTP 429 with `Retry-After: 8`, `X-RateLimit-Remaining: 0`, and a 60-request limit. After the cooldown, the browser received HTTP 200 for the initial contracts and explore requests. A direct page-23 request still timed out after 20 seconds, including the browser request marker and parameter order. The blocker has two parts: a server rate limit and a page-specific upstream timeout.
 - The discovery client now sends the browser request marker and handles numeric or HTTP-date `Retry-After` values, adaptive slowdown, jitter, and circuit pauses. The fix is covered by 42 passing tests in commit `a11c6fd`.
-- The remaining retryable pages are preserved for a later portal-availability window. The latest report is `warn` because the queue is incomplete.
+- The fixed retry run completed with 3 succeeded pages and 8 permanent failures. Every failed job reached attempt 6. The run stored 3 response records with 3 distinct checksums and produced 0 candidate mappings. The refreshed report is `warn` with no retryable jobs.
+- The eight failed pages are preserved as terminal failures for a later source investigation. The latest report is `warn` because the historical queue has unresolved pages.
 
 ## Decisions
 
