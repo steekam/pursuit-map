@@ -60,13 +60,15 @@ def test_partition_plan_is_immutable_closed_route_and_capped(monkeypatch, tmp_pa
     roots = _source_fixture(monkeypatch, tmp_path)
     monkeypatch.setattr(
         discovery,
-        "_partition_metadata_values",
-        lambda canonical, pending, date_field, date_value: {
-            "tender_ref": "T-7",
-            "title": "Old tender",
-            "pe:name": "Buyer",
-            "procurementMethod:title": "Open",
-            "procurementCategory:title": "Goods",
+        "_partition_metadata_index",
+        lambda canonical, pending: {
+            ("close_at", "2025-06-01"): {
+                "tender_ref": "T-7",
+                "title": "Old tender",
+                "pe:name": "Buyer",
+                "procurementMethod:title": "Open",
+                "procurementCategory:title": "Goods",
+            }
         },
     )
     first = discovery.partition_plan("source-run", country="ke", from_year=2025, to_year=2025, max_requests=6)

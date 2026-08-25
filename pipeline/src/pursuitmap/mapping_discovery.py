@@ -220,7 +220,7 @@ def _partition_date_values(canonical: Path, pending: set[str], field: str, years
     connection.close()
     values_by_year: dict[int, list[str]] = {year: [] for year in years}
     for _, value in rows:
-        date_value = value.isoformat()
+        date_value = value.isoformat() if hasattr(value, "isoformat") else str(value)
         if int(date_value[:4]) in values_by_year:
             values_by_year[int(date_value[:4])].append(date_value)
     selected: dict[int, list[str]] = {}
@@ -245,7 +245,7 @@ def _partition_metadata_values(canonical: Path, pending: set[str], date_field: s
     date_column = "release_date" if date_field == "published_at" else "period_end"
     rows = connection.execute(
         f"""
-        SELECT t.tender_number, t.title, t.procuring_entity_name,
+        SELECT t.tender_id, t.title, t.procuring_entity_name,
                t.procurement_method, t.category
         FROM read_parquet(?) t
         WHERE t.ocid IN ({placeholders}) AND try_cast(t.{date_column} AS DATE) = try_cast(? AS DATE)
@@ -263,6 +263,41 @@ def _partition_metadata_values(canonical: Path, pending: set[str], date_field: s
     return values
 
 
+def _partition_metadata_index(canonical: Path, pending: set[str]) -> dict[tuple[str, str], dict[str, str]]:
+    """Read tender metadata once, keyed by (date field, exact date)."""
+    if not pending:
+        return {}
+    connection = duckdb.connect()
+    placeholders = ",".join("?" for _ in pending)
+    rows = connection.execute(
+        f"""
+        SELECT t.release_date, t.period_end, t.tender_id, t.title,
+               coalesce(t.procuring_entity_name, t.buyer_name), t.procurement_method, t.category
+        FROM read_parquet(?) t
+        WHERE t.ocid IN ({placeholders})
+        """,
+        [str(canonical / "tenders.parquet"), *sorted(pending)],
+    ).fetchall()
+    connection.close()
+    fields = ("tender_ref", "title", "pe:name", "procurementMethod:title", "procurementCategory:title")
+    counts_by_key: dict[tuple[str, str], dict[str, dict[str, int]]] = {}
+    for published, closed, *metadata in rows:
+        for field, raw_date in (("published_at", published), ("close_at", closed)):
+            if raw_date is None:
+                continue
+            date_value = str(raw_date)[:10]
+            candidates = counts_by_key.setdefault((field, date_value), {})
+            for name, value in zip(fields, metadata):
+                if value is not None and str(value).strip():
+                    values = candidates.setdefault(name, {})
+                    value_text = str(value).strip()
+                    values[value_text] = values.get(value_text, 0) + 1
+    return {
+        key: {name: min(values, key=lambda value: (-values[value], value)) for name, values in fields_count.items()}
+        for key, fields_count in counts_by_key.items()
+    }
+
+
 def partition_plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year: int = 2025, max_requests: int = 250, config_path: Path | None = None) -> dict:
     """Plan an immutable closed-list filter partition pilot without detail requests."""
     if country != "ke" or from_year > to_year or max_requests < 1 or max_requests > 250:
@@ -276,6 +311,7 @@ def partition_plan(source_run: str, *, country: str = "ke", from_year: int = 201
     _create_ledger(connection)
     config = load_config(config_path)
     years = list(range(from_year, to_year + 1))
+    metadata_index = _partition_metadata_index(canonical, pending)
     planned: list[tuple[dict, int, str, str]] = []
     for date_field in ("published_at", "close_at"):
         for year, dates in _partition_date_values(canonical, pending, date_field, years).items():
@@ -283,7 +319,7 @@ def partition_plan(source_run: str, *, country: str = "ke", from_year: int = 201
                 params = _base_params(100)
                 params[date_field] = date_value
                 planned.append((params, year, date_field, date_value))
-                for metadata_field, metadata_value in _partition_metadata_values(canonical, pending, date_field, date_value).items():
+                for metadata_field, metadata_value in metadata_index.get((date_field, date_value), {}).items():
                     filtered = _base_params(100)
                     filtered[date_field] = date_value
                     filtered[metadata_field] = metadata_value
