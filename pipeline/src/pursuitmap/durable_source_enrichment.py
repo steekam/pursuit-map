@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import random
+import socket
+import ssl
 import threading
 import time
 import urllib.error
@@ -23,6 +26,49 @@ from .source_enrichment import SCHEMA, parse_tender_payload
 
 
 BASE_URL = "https://tenders.go.ke"
+
+
+def _ipv4_connection(address: tuple[str, int], timeout: float | None = None, source_address=None) -> socket.socket:
+    host, port = address
+    last_error: OSError | None = None
+    for family, socktype, proto, _, sockaddr in socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM):
+        sock = socket.socket(family, socktype, proto)
+        try:
+            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+                sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(sockaddr)
+            return sock
+        except OSError as error:
+            last_error = error
+            sock.close()
+    if last_error is None:
+        raise OSError(f"No IPv4 address for {host}")
+    raise last_error
+
+
+class _IPv4HTTPConnection(http.client.HTTPConnection):
+    def _create_connection(self, address, timeout=None, source_address=None):
+        return _ipv4_connection(address, timeout, source_address)
+
+
+class _IPv4HTTPSConnection(http.client.HTTPSConnection):
+    def _create_connection(self, address, timeout=None, source_address=None):
+        return _ipv4_connection(address, timeout, source_address)
+
+
+class _IPv4HTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, request):
+        return self.do_open(_IPv4HTTPConnection, request)
+
+
+class _IPv4HTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, request):
+        return self.do_open(_IPv4HTTPSConnection, request, context=self._context)
+
+
+_IPV4_OPENER = urllib.request.build_opener(_IPv4HTTPHandler, _IPv4HTTPSHandler)
 LEDGER_SCHEMA = {
     "run_metadata": "run_id VARCHAR PRIMARY KEY, country VARCHAR, source_snapshot_sha256 VARCHAR, config_json VARCHAR, created_at VARCHAR, status VARCHAR, detail_limit INTEGER, resume_count INTEGER",
     "request_jobs": "job_id VARCHAR PRIMARY KEY, run_id VARCHAR, job_type VARCHAR, endpoint VARCHAR, url VARCHAR, params_json VARCHAR, expected_ocid VARCHAR, external_id VARCHAR, status VARCHAR, attempts INTEGER, next_attempt_at DOUBLE, lease_owner VARCHAR, lease_until DOUBLE, http_status INTEGER, error_class VARCHAR, error_message VARCHAR, response_hash VARCHAR, response_path VARCHAR, observed_ocid VARCHAR, created_at VARCHAR, updated_at VARCHAR",
@@ -204,7 +250,7 @@ def _fetch(url: str, params: dict, timeout: int) -> tuple[int, dict, bytes]:
     request_url = url + ("?" + query if query else "")
     request = urllib.request.Request(request_url, headers={"User-Agent": "PursuitMap/0.1 durable-source-enrichment", "Accept": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _IPV4_OPENER.open(request, timeout=timeout) as response:
             return response.status, dict(response.headers), response.read()
     except urllib.error.HTTPError as error:
         return error.code, dict(error.headers), error.read()
