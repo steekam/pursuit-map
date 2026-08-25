@@ -558,6 +558,24 @@ def report(run: str, *, country: str = "ke") -> dict:
     duplicate_rows = connection.execute("SELECT coalesce(sum(duplicate_count),0) FROM discovery_mappings WHERE run_id=?", [run]).fetchone()[0]
     capability_rows = connection.execute("SELECT endpoint_family,endpoint,parameter_name,parameter_value,status,record_count,notes FROM discovery_capabilities WHERE run_id=? ORDER BY endpoint,parameter_name", [run]).fetchall()
     errors = {str(row[0]): row[1] for row in connection.execute("SELECT error_class,count(*) FROM discovery_jobs WHERE run_id=? AND error_class IS NOT NULL GROUP BY error_class ORDER BY error_class", [run]).fetchall()}
+    filter_counts = [
+        {"filter_field": row[0], "jobs": row[1], "succeeded": row[2]}
+        for row in connection.execute("SELECT filter_field, count(*), sum(CASE WHEN status='succeeded' THEN 1 ELSE 0 END) FROM discovery_jobs WHERE run_id=? GROUP BY filter_field ORDER BY filter_field", [run]).fetchall()
+    ]
+    response_summary = dict(zip(("responses", "distinct_checksums", "bytes"), connection.execute("SELECT count(*), count(DISTINCT response_hash), coalesce(sum(response_bytes), 0) FROM discovery_responses WHERE run_id=?", [run]).fetchone()))
+    canonical = canonical_root(country)
+    year_rows = connection.execute(
+        """
+        SELECT coalesce(substr(r.release_date, 1, 4), 'unknown') AS year,
+               count(DISTINCT m.ocid) AS unique_ocids,
+               count(*) AS observations
+        FROM discovery_mappings m
+        LEFT JOIN read_parquet(?) r ON r.ocid = m.ocid
+        WHERE m.run_id=?
+        GROUP BY year ORDER BY year
+        """,
+        [str(canonical / "releases.parquet"), run],
+    ).fetchall()
     safe_run = run.replace("'", "''")
     prefix = "mapping_discovery" if not is_partition else "mapping_partition"
     mappings_path = str(output_root / f"{prefix}_mappings.parquet").replace("'", "''")
@@ -578,6 +596,9 @@ def report(run: str, *, country: str = "ke") -> dict:
         "new_canonical_matches": new_matches,
         "duplicate_observations": duplicate_rows,
         "error_counts": errors,
+        "filter_counts": filter_counts,
+        "response_summary": response_summary,
+        "coverage_by_year": [{"year": row[0], "unique_ocids": row[1], "observations": row[2]} for row in year_rows],
         "capabilities": [dict(zip(("endpoint_family", "endpoint", "parameter_name", "parameter_value", "status", "record_count", "notes"), row)) for row in capability_rows],
         "output_root": str(output_root),
         "limitations": ["List and archive responses establish candidate mappings only. Detail OCID validation is required before promotion.", "A bounded probe does not measure exhaustive historical coverage."],
