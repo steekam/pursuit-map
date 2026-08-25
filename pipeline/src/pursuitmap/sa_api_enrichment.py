@@ -120,6 +120,7 @@ def run(run_id: str, *, timeout: int = 30, rate: float = 1.0, jitter: float = 1.
     _setup(connection)
     cache = _cache_connection(roots)
     source_sha = connection.execute("SELECT source_snapshot_sha256 FROM run_metadata WHERE run_id=?", [run_id]).fetchone()[0]
+    connection.execute("UPDATE request_jobs SET status='pending', updated_at=? WHERE run_id=? AND status='running'", [utc_now(), run_id])
     connection.execute("UPDATE run_metadata SET status='running' WHERE run_id=?", [run_id])
     next_at = 0.0
     while True:
@@ -157,14 +158,14 @@ def run(run_id: str, *, timeout: int = 30, rate: float = 1.0, jitter: float = 1.
                 retryable = status in RETRY_STATUSES and attempt < max_attempts
                 state, error_class, error_message = ("retryable_failed" if retryable else "permanent_failed"), f"http_{status}", "HTTP response"
                 connection.execute("UPDATE request_jobs SET status=?, http_status=?, error_class=?, error_message=?, response_hash=?, response_path=?, updated_at=? WHERE job_id=?", [state, status, error_class, error_message, digest, path, utc_now(), job_id])
-            connection.execute("INSERT INTO request_events VALUES (nextval('event_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?)", [job_id, attempt, state, status, retryable, error_class, error_message, digest])
+            connection.execute("INSERT INTO request_events VALUES (nextval('event_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?)", [job_id, attempt, state, status, retryable, error_class, error_message, digest, utc_now()])
         except (ValueError, json.JSONDecodeError) as error:
             connection.execute("UPDATE request_jobs SET status='permanent_failed', error_class='validation', error_message=?, updated_at=? WHERE job_id=?", [str(error), utc_now(), job_id])
-            connection.execute("INSERT INTO request_events VALUES (nextval('event_seq'), ?, ?, 'permanent_failed', 0, NULL, FALSE, 'validation', ?, NULL, ?)", [job_id, attempt, str(error), utc_now()])
+            connection.execute("INSERT INTO request_events VALUES (nextval('event_seq'), ?, ?, 'permanent_failed', NULL, FALSE, 'validation', ?, NULL, ?)", [job_id, attempt, str(error), utc_now()])
         except Exception as error:
             state = "retryable_failed" if attempt < max_attempts else "permanent_failed"
             connection.execute("UPDATE request_jobs SET status=?, error_class=?, error_message=?, updated_at=? WHERE job_id=?", [state, type(error).__name__, str(error), utc_now(), job_id])
-            connection.execute("INSERT INTO request_events VALUES (nextval('event_seq'), ?, ?, ?, 0, NULL, ?, ?, ?, NULL, ?)", [job_id, attempt, state, state == "retryable_failed", type(error).__name__, str(error), utc_now()])
+            connection.execute("INSERT INTO request_events VALUES (nextval('event_seq'), ?, ?, ?, NULL, ?, ?, ?, NULL, ?)", [job_id, attempt, state, state == "retryable_failed", type(error).__name__, str(error), utc_now()])
     materialized = _materialize(connection, run_id, output_root, source_sha)
     counts = {row[0]: row[1] for row in connection.execute("SELECT status,count(*) FROM request_jobs WHERE run_id=? GROUP BY 1", [run_id]).fetchall()}
     report = {"run_id": run_id, "source_snapshot_sha256": source_sha, "job_counts": counts, "accepted_rows": materialized["rows"], "field_coverage": materialized["field_coverage"], "cache_hits": connection.execute("SELECT count(*) FROM request_jobs WHERE run_id=? AND cache_hit", [run_id]).fetchone()[0], "output_root": str(output_root), "status": "pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn"}
