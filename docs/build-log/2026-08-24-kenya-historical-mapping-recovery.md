@@ -55,4 +55,24 @@ Date: 2026-08-24
 - The source returned rate-limit responses during promotion. The remaining sample requires controlled resume.
 - The bounded discovery run recovered 3,111 previously unvalidated canonical OCIDs. Two discovery matches were already covered elsewhere. The remaining 242,422 baseline `mapping_pending` records need a new source-discovery strategy.
 - The Excel route has no OCID or tender ID. Its exact reference matches remain diagnostics until an OCID-bearing response validates each join. Current canonical coverage therefore remains 16,710 / 259,132 = 6.448%.
+
+## 2026-08-25 — financial-year archive probe
+
+Fresh run: `mapping-discovery-20260825T131416832813Z-5501335abfb5`.
+
+- requests: 11, one initial page per financial year;
+- successful responses: 11;
+- raw responses: 11;
+- distinct response checksums: 11;
+- response bytes: 1,004,149;
+- mapping observations: 74;
+- unique candidate OCIDs: 74;
+- new canonical candidates: 70;
+- overlap with the partition pilot: 0 OCIDs.
+
+The `/api/get/explored-contracts` route returned data for all 11 financial-year probes. The first page is capped at 10 records, so this result measures route access and first-page yield. It does not measure full financial-year coverage.
+
+The existing Excel capture remains the broader contract-data source: 11 workbooks, 140,938 rows, and 1,728 exact references to 1,728 already validated OCIDs. The workbooks contain contract numbers, amounts, award and contract dates, buyer names, supplier names, procurement fields, and tender references. They contain no OCID or PPIP tender ID. Excel joins remain diagnostic until an OCID-bearing response validates them.
+
+The next efficient step is to promote a deterministic sample from the 70 archive candidates and the 419 partition candidates. Keep the two source cohorts separate during validation.
 - The JSON continuation batch is a zero-yield network-outage result. Its failures remain separate from source-coverage conclusions.
