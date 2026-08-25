@@ -18,7 +18,13 @@ from .provenance import run_id, sha256_file, source_hash, utc_now
 
 DISCOVERY_VERSION = "kenya-mapping-discovery-1"
 LIST_ENDPOINTS = ("/api/active-tenders", "/api/closed-tenders")
-ARCHIVE_ENDPOINTS = ("/api/explore-contracts", "/api/get/all/published-contracts", "/api/contract")
+ARCHIVE_ENDPOINTS = ("/api/explore-contracts", "/api/get/all/published-contracts", "/api/get/explored-contracts", "/api/contract")
+FINANCIAL_YEAR_IDS = (
+    (39, "2026-2027"), (36, "2025-2026"), (22, "2024-2025"),
+    (21, "2023-2024"), (20, "2022-2023"), (19, "2021-2022"),
+    (13, "2020-2021"), (14, "2019-2020"), (15, "2018-2019"),
+    (38, "2016-2017"), (37, "2015-2016"),
+)
 DISCOVERY_SCHEMA = {
     "run_metadata": "run_id VARCHAR PRIMARY KEY, country VARCHAR, source_run_id VARCHAR, source_snapshot_sha256 VARCHAR, config_json VARCHAR, created_at VARCHAR, status VARCHAR, max_jobs INTEGER",
     "discovery_jobs": "job_id VARCHAR PRIMARY KEY, run_id VARCHAR, endpoint_family VARCHAR, endpoint VARCHAR, url VARCHAR, params_json VARCHAR, cohort_year INTEGER, filter_field VARCHAR, filter_value VARCHAR, status VARCHAR, attempts INTEGER, next_attempt_at DOUBLE, http_status INTEGER, error_class VARCHAR, error_message VARCHAR, response_hash VARCHAR, response_path VARCHAR, created_at VARCHAR, updated_at VARCHAR",
@@ -97,7 +103,7 @@ def _date_values(canonical: Path, pending: set[str], field: str, years: list[int
     return selected
 
 
-def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year: int = 2025, max_jobs: int = 250, config_path: Path | None = None, contract_only: bool = False) -> dict:
+def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year: int = 2025, max_jobs: int = 250, config_path: Path | None = None, contract_only: bool = False, financial_year_json_only: bool = False) -> dict:
     if country != "ke" or from_year > to_year:
         raise ValueError("country must be ke and from_year must be <= to_year")
     pending, validated, canonical, source_sha = _canonical_context(source_run, country)
@@ -143,12 +149,18 @@ def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year
                         params[metadata_field] = metadata_value
                         jobs.append((endpoint, params, year, f"{date_field}+{metadata_field}", f"{value}|{metadata_value}"))
     for endpoint in ARCHIVE_ENDPOINTS:
-        if endpoint == "/api/contract":
+        if endpoint == "/api/get/explored-contracts":
+            for year_id, label in FINANCIAL_YEAR_IDS:
+                clauses = json.dumps([{"col": "financial_year_id", "value": year_id, "type": "nominal"}], separators=(",", ":"))
+                jobs.append((endpoint, {"perpage": 10, "page": 1, "clauses": clauses}, int(label[:4]), "financial_year", label))
+        elif endpoint == "/api/contract":
             jobs.append((endpoint, {"perpage": 50, "page": 1}, None, "contract_archive", ""))
         else:
             jobs.append((endpoint, {"perpage": 100, "page": 1}, None, "archive_control", ""))
     if contract_only:
         jobs = [job for job in jobs if job[0] == "/api/contract"]
+    if financial_year_json_only:
+        jobs = [job for job in jobs if job[0] == "/api/get/explored-contracts"]
     jobs = jobs[:max_jobs]
     for endpoint, params, year, field, value in jobs:
         _insert_job(connection, run, "archive" if endpoint in ARCHIVE_ENDPOINTS else "list", endpoint, params, cohort_year=year, filter_field=field, filter_value=value)
