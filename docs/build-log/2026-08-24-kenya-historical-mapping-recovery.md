@@ -35,6 +35,8 @@ Date: 2026-08-24
 - A bounded IPv4 probe of failed page 23 waited 60 seconds and received 0 bytes. A five-second confirmation returned curl timeout 28 with HTTP 000 and 0 bytes. A known-good page still returned HTTP 200 in 0.57 seconds. The timeout remains page-specific upstream behavior.
 - A route probe for failed page 23 with `perpage=5` also timed out after 20 seconds with 0 bytes. The timeout persisted after reducing the requested page size.
 - Browser validation reached the Contracts view, selected financial year 2020/2021, and rendered page 23 of 693 with contract records. The portal UI therefore has a working path for the page that timed out in the direct client. Request-header or request-sequence differences remain unverified.
+- Browser network capture later showed the page-23 request remained pending. Separate browser API calls returned HTTP 429 with `Retry-After: 8`, `X-RateLimit-Remaining: 0`, and a 60-request limit. After the cooldown, the browser received HTTP 200 for the initial contracts and explore requests. A direct page-23 request still timed out after 20 seconds, including the browser request marker and parameter order. The blocker has two parts: a server rate limit and a page-specific upstream timeout.
+- The discovery client now sends the browser request marker and handles numeric or HTTP-date `Retry-After` values, adaptive slowdown, jitter, and circuit pauses. The fix is covered by 42 passing tests in commit `a11c6fd`.
 - The remaining retryable pages are preserved for a later portal-availability window. The latest report is `warn` because the queue is incomplete.
 
 ## Decisions
