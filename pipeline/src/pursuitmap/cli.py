@@ -27,6 +27,7 @@ from .document_download import run as document_run
 from .document_features import extract_features, report as document_feature_report
 from .source_enrichment_benchmark import benchmark as source_enrich_benchmark
 from .mapping_discovery import execute as gap_execute
+from .mapping_discovery import partition_plan, partition_report
 from .mapping_discovery import plan as gap_plan
 from .mapping_discovery import report as gap_report
 from .mapping_discovery import promote as gap_promote
@@ -124,6 +125,21 @@ def main() -> None:
     gap_report_parser = durable_subparsers.add_parser("gap-report")
     gap_report_parser.add_argument("country", choices=["ke"])
     gap_report_parser.add_argument("--run-id", required=True)
+    partition_plan_parser = durable_subparsers.add_parser("partition-plan")
+    partition_plan_parser.add_argument("country", choices=["ke"])
+    partition_plan_parser.add_argument("--source-run-id", required=True)
+    partition_plan_parser.add_argument("--from-year", type=int, default=2018)
+    partition_plan_parser.add_argument("--to-year", type=int, default=2025)
+    partition_plan_parser.add_argument("--max-requests", type=int, default=250)
+    partition_run_parser = durable_subparsers.add_parser("partition-run")
+    partition_run_parser.add_argument("country", choices=["ke"])
+    partition_run_parser.add_argument("--run-id", required=True)
+    partition_resume_parser = durable_subparsers.add_parser("partition-resume")
+    partition_resume_parser.add_argument("country", choices=["ke"])
+    partition_resume_parser.add_argument("--run-id", required=True)
+    partition_report_parser = durable_subparsers.add_parser("partition-report")
+    partition_report_parser.add_argument("country", choices=["ke"])
+    partition_report_parser.add_argument("--run-id", required=True)
     promote_parser = durable_subparsers.add_parser("promote")
     promote_parser.add_argument("country", choices=["ke"])
     promote_parser.add_argument("--discovery-run-id", required=True)
@@ -212,6 +228,14 @@ def main() -> None:
             result = gap_execute(args.run_id, country=args.country, reset_failures=True)
         elif args.source_enrich_action == "gap-report":
             result = gap_report(args.run_id, country=args.country)
+        elif args.source_enrich_action == "partition-plan":
+            result = partition_plan(args.source_run_id, country=args.country, from_year=args.from_year, to_year=args.to_year, max_requests=args.max_requests)
+        elif args.source_enrich_action == "partition-run":
+            result = gap_execute(args.run_id, country=args.country)
+        elif args.source_enrich_action == "partition-resume":
+            result = gap_execute(args.run_id, country=args.country, reset_failures=True)
+        elif args.source_enrich_action == "partition-report":
+            result = partition_report(args.run_id, country=args.country)
         elif args.source_enrich_action == "promote":
             result = gap_promote(args.discovery_run_id, country=args.country, sample_per_cohort=args.sample_per_cohort, all_mappings=args.all_mappings)
         elif args.source_enrich_action == "combine":

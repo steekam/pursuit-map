@@ -56,6 +56,30 @@ def test_gap_plan_is_bounded_and_list_only(monkeypatch, tmp_path):
     connection.close()
 
 
+def test_partition_plan_is_immutable_closed_route_and_capped(monkeypatch, tmp_path):
+    roots = _source_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        discovery,
+        "_partition_metadata_values",
+        lambda canonical, pending, date_field, date_value: {
+            "tender_ref": "T-7",
+            "title": "Old tender",
+            "pe:name": "Buyer",
+            "procurementMethod:title": "Open",
+            "procurementCategory:title": "Goods",
+        },
+    )
+    first = discovery.partition_plan("source-run", country="ke", from_year=2025, to_year=2025, max_requests=6)
+    second = discovery.partition_plan("source-run", country="ke", from_year=2025, to_year=2025, max_requests=6)
+    assert first["run_id"] != second["run_id"]
+    connection = duckdb.connect(str(roots.enriched / first["run_id"] / "ledger.duckdb"), read_only=True)
+    assert connection.execute("SELECT count(*) FROM discovery_jobs").fetchone()[0] == 6
+    assert connection.execute("SELECT count(*) FROM discovery_jobs WHERE endpoint = '/api/closed-tenders'").fetchone()[0] == 6
+    assert connection.execute("SELECT count(*) FROM discovery_jobs WHERE endpoint_family = 'partition'").fetchone()[0] == 6
+    assert connection.execute("SELECT max(attempts) FROM discovery_jobs").fetchone()[0] == 0
+    connection.close()
+
+
 def test_gap_execute_deduplicates_and_enqueues_next_page(monkeypatch, tmp_path):
     roots = _source_fixture(monkeypatch, tmp_path)
     planned = discovery.plan("source-run", country="ke", from_year=2025, to_year=2025, max_jobs=1)
@@ -84,6 +108,7 @@ def test_gap_execute_honors_retry_after(monkeypatch, tmp_path):
     assert result["job_counts"]["succeeded"] == 1
     assert sleeps[0] == 8.0
     assert connection.execute("SELECT attempts, status FROM discovery_jobs").fetchone() == (2, "succeeded")
+    assert '"Retry-After": "8"' in connection.execute("SELECT headers_json FROM discovery_responses WHERE http_status = 429").fetchone()[0]
     connection.close()
 
 

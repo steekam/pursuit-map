@@ -13,10 +13,11 @@ import duckdb
 
 from .durable_source_enrichment import BASE_URL, EngineConfig, RateLimiter, _cache_connection, _cache_lookup, _cache_store, _create_sequences, _fetch, _insert_job as _insert_detail_job, _now, _create_ledger as _create_detail_ledger, classify_status, execute as execute_detail, load_config, parse_retry_after
 from .paths import canonical_root, country_paths
-from .provenance import run_id, sha256_file, source_hash, utc_now
+from .provenance import environment, run_id, sha256_file, source_hash, utc_now
 
 
 DISCOVERY_VERSION = "kenya-mapping-discovery-1"
+PARTITION_VERSION = "kenya-mapping-partition-1"
 LIST_ENDPOINTS = ("/api/active-tenders", "/api/closed-tenders")
 ARCHIVE_ENDPOINTS = ("/api/explore-contracts", "/api/get/all/published-contracts", "/api/get/explored-contracts", "/api/contract")
 FINANCIAL_YEAR_IDS = (
@@ -29,7 +30,7 @@ DISCOVERY_SCHEMA = {
     "run_metadata": "run_id VARCHAR PRIMARY KEY, country VARCHAR, source_run_id VARCHAR, source_snapshot_sha256 VARCHAR, config_json VARCHAR, created_at VARCHAR, status VARCHAR, max_jobs INTEGER",
     "discovery_jobs": "job_id VARCHAR PRIMARY KEY, run_id VARCHAR, endpoint_family VARCHAR, endpoint VARCHAR, url VARCHAR, params_json VARCHAR, cohort_year INTEGER, filter_field VARCHAR, filter_value VARCHAR, status VARCHAR, attempts INTEGER, next_attempt_at DOUBLE, http_status INTEGER, error_class VARCHAR, error_message VARCHAR, response_hash VARCHAR, response_path VARCHAR, created_at VARCHAR, updated_at VARCHAR",
     "discovery_events": "event_id BIGINT, job_id VARCHAR, attempt INTEGER, state VARCHAR, wait_seconds DOUBLE, http_status INTEGER, retryable BOOLEAN, error_class VARCHAR, error_message VARCHAR, response_hash VARCHAR, created_at VARCHAR",
-    "discovery_responses": "response_id BIGINT, run_id VARCHAR, job_id VARCHAR, url VARCHAR, retrieved_at VARCHAR, http_status INTEGER, content_type VARCHAR, response_hash VARCHAR, response_path VARCHAR, response_bytes BIGINT, cache_hit BOOLEAN",
+    "discovery_responses": "response_id BIGINT, run_id VARCHAR, job_id VARCHAR, url VARCHAR, retrieved_at VARCHAR, http_status INTEGER, content_type VARCHAR, headers_json VARCHAR, response_hash VARCHAR, response_path VARCHAR, response_bytes BIGINT, cache_hit BOOLEAN",
     "discovery_mappings": "mapping_id BIGINT, run_id VARCHAR, mapping_key VARCHAR UNIQUE, job_id VARCHAR, endpoint_family VARCHAR, endpoint VARCHAR, list_page INTEGER, external_id VARCHAR, ocid VARCHAR, tender_ref VARCHAR, canonical_match BOOLEAN, new_canonical_match BOOLEAN, duplicate_count INTEGER, response_hash VARCHAR, created_at VARCHAR",
     "discovery_capabilities": "capability_id BIGINT, run_id VARCHAR, endpoint_family VARCHAR, endpoint VARCHAR, parameter_name VARCHAR, parameter_value VARCHAR, status VARCHAR, record_count INTEGER, response_hash VARCHAR, observed_at VARCHAR, notes VARCHAR",
 }
@@ -50,6 +51,7 @@ def _job_id(endpoint: str, params: dict) -> str:
 def _create_ledger(connection: duckdb.DuckDBPyConnection) -> None:
     for table, definition in DISCOVERY_SCHEMA.items():
         connection.execute(f'CREATE TABLE IF NOT EXISTS "{table}" ({definition})')
+    connection.execute("ALTER TABLE discovery_responses ADD COLUMN IF NOT EXISTS headers_json VARCHAR")
     connection.execute("CREATE SEQUENCE IF NOT EXISTS discovery_event_seq START 1")
     connection.execute("CREATE SEQUENCE IF NOT EXISTS discovery_response_seq START 1")
     connection.execute("CREATE SEQUENCE IF NOT EXISTS discovery_mapping_seq START 1")
@@ -203,6 +205,108 @@ def plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year
     return {"run_id": run, "source_run_id": source_run, "source_snapshot_sha256": source_sha, "status": "planned", "planned_jobs": planned, "pending_canonical": len(pending), "validated_canonical": len(validated), "max_jobs": max_jobs, "output_root": str(output_root)}
 
 
+def _partition_date_values(canonical: Path, pending: set[str], field: str, years: list[int]) -> dict[int, list[str]]:
+    """Select four deterministic dates per year: earliest, median, latest, and mode."""
+    if not pending:
+        return {}
+    connection = duckdb.connect()
+    column = "release_date" if field == "published_at" else "period_end"
+    table = "releases" if field == "published_at" else "tenders"
+    placeholders = ",".join("?" for _ in pending)
+    rows = connection.execute(
+        f"SELECT ocid, try_cast({column} AS DATE) FROM read_parquet(?) WHERE ocid IN ({placeholders}) AND try_cast({column} AS DATE) IS NOT NULL",
+        [str(canonical / f"{table}.parquet"), *sorted(pending)],
+    ).fetchall()
+    connection.close()
+    values_by_year: dict[int, list[str]] = {year: [] for year in years}
+    for _, value in rows:
+        date_value = value.isoformat()
+        if int(date_value[:4]) in values_by_year:
+            values_by_year[int(date_value[:4])].append(date_value)
+    selected: dict[int, list[str]] = {}
+    for year, values in values_by_year.items():
+        if not values:
+            continue
+        counts: dict[str, int] = {}
+        for value in values:
+            counts[value] = counts.get(value, 0) + 1
+        unique = sorted(counts)
+        positions = {0, len(unique) // 2, len(unique) - 1}
+        mode = min(unique, key=lambda value: (-counts[value], value))
+        selected[year] = sorted({unique[position] for position in positions} | {mode})
+    return selected
+
+
+def _partition_metadata_values(canonical: Path, pending: set[str], date_field: str, date_value: str) -> dict[str, str]:
+    if not pending:
+        return {}
+    connection = duckdb.connect()
+    placeholders = ",".join("?" for _ in pending)
+    date_column = "release_date" if date_field == "published_at" else "period_end"
+    rows = connection.execute(
+        f"""
+        SELECT t.tender_number, t.title, t.procuring_entity_name,
+               t.procurement_method, t.category
+        FROM read_parquet(?) t
+        WHERE t.ocid IN ({placeholders}) AND try_cast(t.{date_column} AS DATE) = try_cast(? AS DATE)
+        """,
+        [str(canonical / "tenders.parquet"), *sorted(pending), date_value],
+    ).fetchall()
+    connection.close()
+    fields = ("tender_ref", "title", "pe:name", "procurementMethod:title", "procurementCategory:title")
+    values: dict[str, str] = {}
+    for index, field in enumerate(fields):
+        candidates = [str(row[index]).strip() for row in rows if row[index] is not None and str(row[index]).strip()]
+        if candidates:
+            counts = {value: candidates.count(value) for value in set(candidates)}
+            values[field] = min(counts, key=lambda value: (-counts[value], value))
+    return values
+
+
+def partition_plan(source_run: str, *, country: str = "ke", from_year: int = 2018, to_year: int = 2025, max_requests: int = 250, config_path: Path | None = None) -> dict:
+    """Plan an immutable closed-list filter partition pilot without detail requests."""
+    if country != "ke" or from_year > to_year or max_requests < 1 or max_requests > 250:
+        raise ValueError("partition planning requires ke, an ordered year range, and max_requests between 1 and 250")
+    pending, validated, canonical, source_sha = _canonical_context(source_run, country)
+    roots = country_paths(country)
+    run = run_id(source_sha, "mapping-partition")
+    output_root = roots.enriched / run
+    output_root.mkdir(parents=True, exist_ok=True)
+    connection = duckdb.connect(str(output_root / "ledger.duckdb"))
+    _create_ledger(connection)
+    config = load_config(config_path)
+    years = list(range(from_year, to_year + 1))
+    planned: list[tuple[dict, int, str, str]] = []
+    for date_field in ("published_at", "close_at"):
+        for year, dates in _partition_date_values(canonical, pending, date_field, years).items():
+            for date_value in dates:
+                params = _base_params(100)
+                params[date_field] = date_value
+                planned.append((params, year, date_field, date_value))
+                for metadata_field, metadata_value in _partition_metadata_values(canonical, pending, date_field, date_value).items():
+                    filtered = _base_params(100)
+                    filtered[date_field] = date_value
+                    filtered[metadata_field] = metadata_value
+                    planned.append((filtered, year, f"{date_field}+{metadata_field}", f"{date_value}|{metadata_value}"))
+    planned = planned[:max_requests]
+    config_json = {
+        "version": PARTITION_VERSION,
+        "source_run_id": source_run,
+        "route": "/api/closed-tenders",
+        "filters": ["published_at", "close_at", "date_plus_buyer", "date_plus_tender_ref", "date_plus_title", "date_plus_procurement_method", "date_plus_category"],
+        "max_requests": max_requests,
+        "config": config.__dict__,
+    }
+    connection.execute("INSERT INTO run_metadata VALUES (?, ?, ?, ?, ?, ?, 'planned', ?)", [run, country, source_run, source_sha, json.dumps(config_json, sort_keys=True), utc_now(), max_requests])
+    for params, year, field, value in planned:
+        _insert_job(connection, run, "partition", "/api/closed-tenders", params, cohort_year=year, filter_field=field, filter_value=value)
+    planned_count = connection.execute("SELECT count(*) FROM discovery_jobs WHERE run_id = ?", [run]).fetchone()[0]
+    connection.close()
+    result = {"run_id": run, "source_run_id": source_run, "source_snapshot_sha256": source_sha, "status": "planned", "planned_jobs": planned_count, "pending_canonical": len(pending), "validated_canonical": len(validated), "max_requests": max_requests, "output_root": str(output_root)}
+    (output_root / "partition_manifest.json").write_text(json.dumps({**result, "operation": "mapping-partition", "version": PARTITION_VERSION, "environment": environment(), "generated_at": utc_now()}, indent=2) + "\n", encoding="utf-8")
+    return result
+
+
 def _extract_records(payload: bytes) -> tuple[list[dict], str]:
     value = json.loads(payload)
     if isinstance(value, list):
@@ -220,7 +324,12 @@ def _save_response(connection, run: str, job_id: str, url: str, status: int, hea
     path = root / f"{job_id}-{digest[:12]}.json"
     if not path.exists():
         path.write_bytes(payload)
-    connection.execute("INSERT INTO discovery_responses VALUES (nextval('discovery_response_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run, job_id, url, utc_now(), status, headers.get("Content-Type"), digest, str(path), len(payload), cache_hit])
+    connection.execute("""
+        INSERT INTO discovery_responses
+        (response_id, run_id, job_id, url, retrieved_at, http_status, content_type,
+         headers_json, response_hash, response_path, response_bytes, cache_hit)
+        VALUES (nextval('discovery_response_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, [run, job_id, url, utc_now(), status, headers.get("Content-Type"), json.dumps(headers, sort_keys=True), digest, str(path), len(payload), cache_hit])
     return digest, str(path)
 
 
@@ -385,6 +494,8 @@ def report(run: str, *, country: str = "ke") -> dict:
     if not metadata:
         raise FileNotFoundError(f"Discovery run not found: {run}")
     source_run, source_sha, status, max_jobs = metadata
+    config_json = connection.execute("SELECT config_json FROM run_metadata WHERE run_id=?", [run]).fetchone()[0]
+    is_partition = '"version": "' + PARTITION_VERSION + '"' in config_json
     job_counts = {str(row[0]): row[1] for row in connection.execute("SELECT status,count(*) FROM discovery_jobs WHERE run_id=? GROUP BY status ORDER BY status", [run]).fetchall()}
     mapping_count = connection.execute("SELECT count(*) FROM discovery_mappings WHERE run_id=?", [run]).fetchone()[0]
     new_matches = connection.execute("SELECT count(*) FROM discovery_mappings WHERE run_id=? AND new_canonical_match", [run]).fetchone()[0]
@@ -392,8 +503,9 @@ def report(run: str, *, country: str = "ke") -> dict:
     capability_rows = connection.execute("SELECT endpoint_family,endpoint,parameter_name,parameter_value,status,record_count,notes FROM discovery_capabilities WHERE run_id=? ORDER BY endpoint,parameter_name", [run]).fetchall()
     errors = {str(row[0]): row[1] for row in connection.execute("SELECT error_class,count(*) FROM discovery_jobs WHERE run_id=? AND error_class IS NOT NULL GROUP BY error_class ORDER BY error_class", [run]).fetchall()}
     safe_run = run.replace("'", "''")
-    mappings_path = str(output_root / "mapping_discovery_mappings.parquet").replace("'", "''")
-    capabilities_path = str(output_root / "mapping_discovery_capabilities.parquet").replace("'", "''")
+    prefix = "mapping_discovery" if not is_partition else "mapping_partition"
+    mappings_path = str(output_root / f"{prefix}_mappings.parquet").replace("'", "''")
+    capabilities_path = str(output_root / f"{prefix}_capabilities.parquet").replace("'", "''")
     connection.execute(f"COPY (SELECT * FROM discovery_mappings WHERE run_id = '{safe_run}') TO '{mappings_path}' (FORMAT PARQUET, COMPRESSION ZSTD)")
     connection.execute(f"COPY (SELECT * FROM discovery_capabilities WHERE run_id = '{safe_run}') TO '{capabilities_path}' (FORMAT PARQUET, COMPRESSION ZSTD)")
     connection.close()
@@ -401,7 +513,7 @@ def report(run: str, *, country: str = "ke") -> dict:
         "run_id": run,
         "source_run_id": source_run,
         "source_snapshot_sha256": source_sha,
-        "discovery_version": DISCOVERY_VERSION,
+        "discovery_version": PARTITION_VERSION if is_partition else DISCOVERY_VERSION,
         "generated_at": utc_now(),
         "status": status,
         "max_jobs": max_jobs,
@@ -414,14 +526,19 @@ def report(run: str, *, country: str = "ke") -> dict:
         "output_root": str(output_root),
         "limitations": ["List and archive responses establish candidate mappings only. Detail OCID validation is required before promotion.", "A bounded probe does not measure exhaustive historical coverage."],
     }
-    (output_root / "mapping_discovery_report.json").write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    report_name = "mapping_discovery_report" if not is_partition else "mapping_partition_report"
+    (output_root / f"{report_name}.json").write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
     lines = ["# Kenya mapping discovery report", "", f"Run: `{run}`", f"Status: `{status}`", "", "## Requests", ""]
     lines.extend(f"- `{key}`: {count}" for key, count in job_counts.items())
     lines.extend(["", "## Mappings", "", f"- Observed mappings: {mapping_count}", f"- New canonical matches: {new_matches}", f"- Duplicate observations: {duplicate_rows}", "", "## Errors", ""])
     lines.extend(f"- `{key}`: {count}" for key, count in errors.items())
     lines.extend(["", "Detail validation is a separate promotion stage. This report does not accept candidate mappings as validated enrichment.", ""])
-    (output_root / "mapping_discovery_report.md").write_text("\n".join(lines), encoding="utf-8")
+    (output_root / f"{report_name}.md").write_text("\n".join(lines), encoding="utf-8")
     return value
+
+
+def partition_report(run: str, *, country: str = "ke") -> dict:
+    return report(run, country=country)
 
 
 def _validated_ocids(roots, source_run: str) -> set[str]:
