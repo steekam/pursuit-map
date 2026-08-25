@@ -92,3 +92,9 @@ The project now provides `pursuitmap network-check`. Live source-enrichment and 
 
 After network-enabled resume, detail validation accepted 32 of 69 archive candidates before the portal rate-limit circuit paused the run. Ten HTTP 429 responses were recorded. The document pilot captured 96 files, with 13 permanent failures and 50,183 pending jobs after the 100-request batch. One response hash was shared by two URLs.
 - The JSON continuation batch is a zero-yield network-outage result. Its failures remain separate from source-coverage conclusions.
+
+## 2026-08-25 — document parsing optimization
+
+The first Docling run used default OCR and spent about 50 minutes on one 10.9 MB scanned PDF. The run produced no manifest before interruption. The parser now checkpoints after each binary, records failures, orders pending files by size, and uses embedded PDF text by default. OCR requires the explicit `--ocr` option.
+
+The bounded retry parsed 10 more binaries without failures. The document run now has 53 parsed binaries, 42 pending binaries, and one skipped scan hash. Rule extraction produced 7,142 evidence occurrences across 53 binaries. Evidence completeness is 7,142/7,142 (100%). The feature report status is `warn` because 42 of 95 captured binaries still lack Docling output.
