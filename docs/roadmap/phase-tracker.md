@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-25
 Current phase: Phase 1.5 — deterministic retrieval lab  
-Overall status: Foundation complete. Evaluation and explorer work remain.
+Overall status: Foundation complete. Discovery layer viable. Gold-set evaluation remains.
 
 ## Status vocabulary
 
@@ -22,7 +22,7 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 | Phase 1 — reproducible data foundation | complete | [canonical schema](../domain/canonical-schema.md), [quality report](../build-log/2026-08-23-phase-0-1-foundation.md), commits `78af6cb`, `183c975` | Whether document acquisition or entity review has higher value. |
 | Phase 1 — descriptive analytics | complete | [descriptive SQL](../../analytics/queries/phase1_descriptive.sql), materialized marts, commit `4759e71` | Which explorer views deserve a product surface. |
 | Phase 1.5 — deterministic retrieval lab | in progress | [ICT taxonomy](../../config/verticals/ict.json), [construction taxonomy](../../config/verticals/construction.json), [healthcare taxonomy](../../config/verticals/healthcare.json), [vertical comparison](../build-log/2026-08-23-vertical-comparison.md) | Build a reviewed challenge set before making accuracy claims. |
-| Phase 1.5 — document feature review | in progress | [document rule registry](../../config/document-extraction/rules.json), Kenya run `data/enriched/kenya/documents-source-enrich-combined-20260825T133500Z` | Parse the remaining 42 binaries, then review the rule output and create the gold set. |
+| Phase 1.5 — document feature review | in progress | [document rule registry](../../config/document-extraction/rules.json), [checkpoint assessment](../checkpoints/2026-08-25-phase-1-5-assessment.md), Kenya run `data/enriched/kenya/documents-source-enrich-combined-20260825T133500Z` | Review the 95-document output, refine noisy rules, and create the gold set. |
 | Phase 1.5 — Procurement Explorer | not started | — | Select the first explorer slice and its evidence contract. |
 | Phase 2 — reviewed retrieval evaluation | not started | — | Compare lexical, BM25, embedding, or hybrid retrieval only after labels exist. |
 | Phase 3 — entity-resolution study | not started | — | Decide whether deterministic review supports a bounded resolution experiment. |
@@ -42,7 +42,7 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 - Marts, reports, and retrieval outputs use operation run directories.
 - Lifecycle integrity checks pass. Source-quality warnings remain visible.
 - Deterministic ICT retrieval returns 7,529 candidates on the current snapshot.
-- The test suite has 13 passing tests.
+- The test suite has 49 passing tests.
 - Cross-session rules live in [`AGENTS.md`](../../AGENTS.md) and [`pipeline-contract.json`](../../config/pipeline-contract.json).
 - Kenya canonical normalization uses a DuckDB vectorized adapter and reconciles raw release, tender, award, contract, and award-supplier counts.
 
@@ -52,7 +52,7 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 - Planning semantics remain weak. The current snapshot has 0 planning items.
 - Supplier ID `0` remains in 4,326 award-supplier rows.
 - Contract timing has 171 missing period starts and 173 sentinel or missing period fields.
-- Document extraction produced 9,212 evidence occurrences across 17 content hashes. The report records 281 conflicts and 281 ambiguities. A conflict means a rule observed more than one normalized value for one feature in a document. An ambiguity means the primary-value rule could not select one value without risking an unsupported choice. These are review queues, not confirmed source errors.
+- Document extraction produced 17,628 evidence occurrences across 95 content hashes. The report records 550 conflicts and 550 ambiguities. A conflict means a rule observed more than one normalized value for one feature in a document. An ambiguity means the primary-value rule could not select one value without risking an unsupported choice. These are review queues, not confirmed source errors.
 - OCR provenance is unavailable in the existing Docling manifests. OCR-derived values remain unknown until page-level OCR status is captured.
 - Kenya has 0 documents, 0 planning objects, 0 plan items, and 0 tender amounts in the canonical snapshot.
 - Kenya quality flags are materialized in a source-preserving enrichment table with rule version `kenya-quality-1`.
@@ -60,18 +60,18 @@ Overall status: Foundation complete. Evaluation and explorer work remain.
 - The bounded historical discovery pilot captured 247 successful and 3 timed-out probes. It found 3,113 new canonical matches from 18,784 candidate mappings.
 - Historical promotion uses a child ledger. The first child sample has 87 validated detail rows and 3 HTTP 429 responses. Pending jobs remain resumable.
 - The first financial-year JSON continuation batch (`mapping-discovery-20260825T010320496668Z-5501335abfb5`) produced 1 successful page, 10 timeout failures, and 0 new mappings during a portal connectivity outage. The run is preserved for retry.
-- Both promotion children passed. The final combined view has 16,710 unique validated OCIDs, with 0 duplicate OCIDs.
+- Both promotion children passed. The latest combined view has 16,742 unique validated OCIDs, with 0 duplicate OCIDs. Coverage is 16,742/259,132 (6.46%).
 - Entity merging, prediction, lead scoring, API, and browser UI are not implemented.
 
 ## Immediate next work
 
-1. Human-review the 17 unique document hashes. For each document, verify role, tender number, dates, buyer, eligibility, technical scope, quantities, commercial terms, evaluation criteria, ICT terms, and page/table evidence.
+1. Human-review the 95-document classification and feature output, starting with the five low-confidence labels and three cross-pass disagreements.
 2. Record reviewed values and page references in a gold file keyed by content hash. Keep conflicting and ambiguous occurrences visible beside the selected value.
-3. Measure field-level agreement and evidence completeness. Do not call the result precision, recall, or commercial accuracy beyond this reviewed sample.
-4. Create a small reviewed retrieval challenge set from fixtures and current-source candidates.
-5. Compare title-only, title-plus-description, category, and full-metadata retrieval against the set.
-6. Resume the historical promotion child run. Promote all remaining discovered mappings only after the sample passes its OCID and raw-response gates.
-7. Review the completed Kenya quality and mapping-gap reports before document acquisition.
+3. Refine role-conditioned rules and re-run the document report.
+4. Measure field-level agreement and evidence completeness. Do not call the result precision, recall, or commercial accuracy beyond this reviewed sample.
+5. Create a small reviewed retrieval challenge set from fixtures and current-source candidates.
+6. Compare title-only, title-plus-description, category, and full-metadata retrieval against the set.
+7. Resume the historical promotion child run only after the document review gate is defined.
 
 ## Queued cleanup tasks
 
