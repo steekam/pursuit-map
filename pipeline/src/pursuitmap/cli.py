@@ -192,6 +192,8 @@ def main() -> None:
     documents_run.add_argument("--limit", type=int)
     documents_parse = documents_subparsers.add_parser("parse")
     documents_parse.add_argument("--run-root", type=Path, required=True)
+    documents_parse.add_argument("--limit", type=int)
+    documents_parse.add_argument("--skip-hash", action="append", default=[])
     documents_extract = documents_subparsers.add_parser("extract")
     documents_extract.add_argument("--run-root", type=Path, required=True)
     documents_extract.add_argument("--rules-path", type=Path, required=True)
@@ -272,7 +274,7 @@ def main() -> None:
         elif args.documents_action == "run":
             result = document_run(args.run_root, timeout=args.timeout, rate_per_second=args.rate, limit=args.limit)
         elif args.documents_action == "parse":
-            result = document_parse(args.run_root)
+            result = document_parse(args.run_root, limit=args.limit, skip_hashes=tuple(args.skip_hash))
         elif args.documents_action == "extract":
             result = extract_features(args.run_root, args.rules_path)
         else:

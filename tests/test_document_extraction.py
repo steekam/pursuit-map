@@ -77,3 +77,16 @@ def test_parse_run_uses_one_converter_and_writes_progress(monkeypatch, tmp_path)
     assert value["total_parsed"] == 1
     assert created == 1
     assert json.loads((run_root / "document_extraction_progress.json").read_text())["status"] == "pass"
+
+
+def test_parse_run_can_checkpoint_and_skip_hash(monkeypatch, tmp_path):
+    run_root = tmp_path / "run"
+    files = run_root / "files"
+    files.mkdir(parents=True)
+    source = files / "abc"
+    source.write_bytes(b"fixture")
+    digest = __import__("hashlib").sha256(b"fixture").hexdigest()
+    (files / "abc.input.json").write_text(json.dumps({"path": str(source), "response_hash": digest, "source_url": "https://example.test/a.pdf", "ocids": [], "release_ids": [], "document_ids": []}))
+    value = parse_run(run_root, skip_hashes=(digest,))
+    assert value["skipped"] == 1
+    assert value["total_parsed"] == 1

@@ -81,17 +81,18 @@ def extract_documents(documents: list[DocumentInput], output_dir: Path) -> list[
     return [_write_extraction(document, output_dir, converter) for document in documents]
 
 
-def parse_run(run_root: Path) -> dict:
+def parse_run(run_root: Path, *, limit: int | None = None, skip_hashes: tuple[str, ...] = ()) -> dict:
     """Parse captured content hashes once and record resumable progress."""
     input_paths = sorted((run_root / "files").glob("*.input.json"))
     output_dir = run_root / "extracted"
     output_dir.mkdir(parents=True, exist_ok=True)
     pending = []
     skipped = 0
+    skipped_hashes = set(skip_hashes)
     for input_path in input_paths:
         metadata = json.loads(input_path.read_text(encoding="utf-8"))
-        document_hash = Path(metadata["path"]).name
-        if (output_dir / document_hash / "extraction_manifest.json").exists():
+        document_hash = metadata.get("response_hash") or Path(metadata["path"]).name
+        if document_hash in skipped_hashes or (output_dir / document_hash / "extraction_manifest.json").exists():
             skipped += 1
             continue
         pending.append(DocumentInput(
@@ -102,11 +103,28 @@ def parse_run(run_root: Path) -> dict:
             release_id="|".join(metadata.get("release_ids") or []),
             document_id="|".join(metadata.get("document_ids") or []),
         ))
-    progress = {"run_root": str(run_root), "input_documents": len(input_paths), "skipped": skipped, "pending": len(pending), "status": "running", "updated_at": utc_now()}
-    (run_root / "document_extraction_progress.json").write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
-    manifests = extract_documents(pending, output_dir) if pending else []
-    progress.update({"parsed": len(manifests), "total_parsed": skipped + len(manifests), "status": "pass", "updated_at": utc_now()})
-    (run_root / "document_extraction_progress.json").write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
+    progress = {"run_root": str(run_root), "input_documents": len(input_paths), "skipped": skipped, "pending": len(pending), "processed": 0, "parsed": 0, "failed": 0, "status": "running", "updated_at": utc_now()}
+    progress_path = run_root / "document_extraction_progress.json"
+    progress_path.write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
+    failures = []
+    converter = _require_docling()() if pending else None
+    for index, document in enumerate(pending):
+        document_hash = sha256_file(document.path)
+        try:
+            _write_extraction(document, output_dir, converter)
+            progress["parsed"] += 1
+        except Exception as error:
+            failures.append({"document_hash": document_hash, "path": str(document.path), "error_type": type(error).__name__, "error": str(error)})
+            progress["failed"] += 1
+        progress.update({"processed": index + 1, "remaining": len(pending) - index - 1, "current_hash": document_hash, "updated_at": utc_now()})
+        progress_path.write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
+        if limit is not None and index + 1 >= limit:
+            break
+    if failures:
+        (run_root / "document_extraction_failures.json").write_text(json.dumps(failures, indent=2) + "\n", encoding="utf-8")
+    complete = progress["processed"] == len(pending)
+    progress.update({"total_parsed": skipped + progress["parsed"], "status": "warn" if failures else ("pass" if complete else "paused_limit"), "updated_at": utc_now()})
+    progress_path.write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
     return progress
 
 
