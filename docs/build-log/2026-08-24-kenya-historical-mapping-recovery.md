@@ -31,6 +31,8 @@ Date: 2026-08-24
 - An independent 15-second connectivity check to the same endpoint returned HTTP 000 with 0 bytes.
 - A retry was interrupted during another endpoint outage. The preserved ledger records 1 succeeded job, 4 permanent timeout failures, 5 retryable timeout failures, and 1 interrupted running job. No mappings were added.
 - The discovery executor now resets interrupted `running` jobs with transient error classes during resume.
+- The latest ordered retry cycle completed 3 pages, recorded 2 permanent timeout failures, and left 6 timeout pages retryable after the worker was stopped. Candidate mappings remained at 0 for this continuation run.
+- The remaining retryable pages are preserved for a later portal-availability window. The latest report is `warn` because the queue is incomplete.
 
 ## Decisions
 
