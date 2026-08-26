@@ -39,6 +39,7 @@ from .enrichment_analysis import analyze as source_enrich_analyze
 from .contract_export import capture as contract_export_capture
 from .network_preflight import check as network_check
 from .sa_api_enrichment import plan as sa_api_plan, run as sa_api_run, report as sa_api_report
+from .sa_api_bulk import plan as sa_bulk_plan, run as sa_bulk_run, report as sa_bulk_report
 
 
 def main() -> None:
@@ -77,6 +78,16 @@ def main() -> None:
     sa_api_run_parser.add_argument("--timeout", type=int, default=30)
     sa_api_report_parser = sa_api_subparsers.add_parser("report")
     sa_api_report_parser.add_argument("--run-id", required=True)
+
+    sa_bulk_parser = commands.add_parser("sa-api-bulk")
+    sa_bulk_subparsers = sa_bulk_parser.add_subparsers(dest="sa_bulk_action", required=True)
+    sa_bulk_subparsers.add_parser("plan")
+    sa_bulk_run_parser = sa_bulk_subparsers.add_parser("run")
+    sa_bulk_run_parser.add_argument("--run-id", required=True)
+    sa_bulk_run_parser.add_argument("--rate", type=float, default=1.0)
+    sa_bulk_run_parser.add_argument("--timeout", type=int, default=90)
+    sa_bulk_report_parser = sa_bulk_subparsers.add_parser("report")
+    sa_bulk_report_parser.add_argument("--run-id", required=True)
 
     source_enrich_parser = commands.add_parser("enrich-source")
     source_enrich_parser.add_argument("country", choices=["ke"])
@@ -234,6 +245,16 @@ def main() -> None:
             result = sa_api_run(args.run_id, rate=args.rate, timeout=args.timeout)
         else:
             result = sa_api_report(args.run_id)
+        print(json.dumps(result, indent=2, default=str))
+        return
+    if args.command == "sa-api-bulk":
+        network_check("https://ocds-api.etenders.gov.za") if args.sa_bulk_action == "run" else None
+        if args.sa_bulk_action == "plan":
+            result = sa_bulk_plan()
+        elif args.sa_bulk_action == "run":
+            result = sa_bulk_run(args.run_id, rate=args.rate, timeout=args.timeout)
+        else:
+            result = sa_bulk_report(args.run_id)
         print(json.dumps(result, indent=2, default=str))
         return
     live_source_actions = {"run", "resume", "gap-run", "gap-resume", "partition-run", "partition-resume", "supervise"}
