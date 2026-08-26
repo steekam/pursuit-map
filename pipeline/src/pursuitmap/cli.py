@@ -40,6 +40,7 @@ from .contract_export import capture as contract_export_capture
 from .network_preflight import check as network_check
 from .sa_api_enrichment import plan as sa_api_plan, run as sa_api_run, report as sa_api_report
 from .sa_api_bulk import plan as sa_bulk_plan, run as sa_bulk_run, report as sa_bulk_report
+from .sa_api_supervisor import plan as sa_supervise_plan, run as sa_supervise_run, report as sa_supervise_report, status as sa_supervise_status
 
 
 def main() -> None:
@@ -88,6 +89,20 @@ def main() -> None:
     sa_bulk_run_parser.add_argument("--timeout", type=int, default=90)
     sa_bulk_report_parser = sa_bulk_subparsers.add_parser("report")
     sa_bulk_report_parser.add_argument("--run-id", required=True)
+
+    sa_supervise_parser = commands.add_parser("sa-api-supervise")
+    sa_supervise_subparsers = sa_supervise_parser.add_subparsers(dest="sa_supervise_action", required=True)
+    sa_supervise_plan_parser = sa_supervise_subparsers.add_parser("plan")
+    sa_supervise_plan_parser.add_argument("--parent-run-id", required=True)
+    for action in ("run", "resume"):
+        runner = sa_supervise_subparsers.add_parser(action)
+        runner.add_argument("--run-id", required=True)
+        runner.add_argument("--rate", type=float, default=1.0)
+        runner.add_argument("--timeout", type=int, default=90)
+        runner.add_argument("--max-concurrency", type=int, default=4)
+    for action in ("status", "report"):
+        reader = sa_supervise_subparsers.add_parser(action)
+        reader.add_argument("--run-id", required=True)
 
     source_enrich_parser = commands.add_parser("enrich-source")
     source_enrich_parser.add_argument("country", choices=["ke"])
@@ -255,6 +270,18 @@ def main() -> None:
             result = sa_bulk_run(args.run_id, rate=args.rate, timeout=args.timeout)
         else:
             result = sa_bulk_report(args.run_id)
+        print(json.dumps(result, indent=2, default=str))
+        return
+    if args.command == "sa-api-supervise":
+        network_check("https://ocds-api.etenders.gov.za") if args.sa_supervise_action in {"run", "resume"} else None
+        if args.sa_supervise_action == "plan":
+            result = sa_supervise_plan(args.parent_run_id)
+        elif args.sa_supervise_action in {"run", "resume"}:
+            result = sa_supervise_run(args.run_id, rate=args.rate, timeout=args.timeout, max_concurrency=args.max_concurrency)
+        elif args.sa_supervise_action == "status":
+            result = sa_supervise_status(args.run_id)
+        else:
+            result = sa_supervise_report(args.run_id)
         print(json.dumps(result, indent=2, default=str))
         return
     live_source_actions = {"run", "resume", "gap-run", "gap-resume", "partition-run", "partition-resume", "supervise"}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import signal
 import time
 import urllib.parse
 from pathlib import Path
@@ -33,6 +34,37 @@ def _url(date_from: str, date_to: str, page: int) -> str:
     return f"{BASE_URL}/api/OCDSReleases?{query}"
 
 
+def _write_progress(output_root: Path, run_id: str, connection: duckdb.DuckDBPyConnection, state: str) -> None:
+    counts = {row[0]: row[1] for row in connection.execute("SELECT status,count(*) FROM bulk_jobs WHERE run_id=? GROUP BY 1", [run_id]).fetchall()}
+    active = connection.execute("SELECT date_from,date_to,page,attempts FROM bulk_jobs WHERE run_id=? AND status='running' LIMIT 1", [run_id]).fetchone()
+    progress = {
+        "run_id": run_id,
+        "state": state,
+        "updated_at": utc_now(),
+        "job_counts": counts,
+        "responses": connection.execute("SELECT count(*) FROM bulk_responses WHERE run_id=?", [run_id]).fetchone()[0],
+        "active_job": {"date_from": active[0], "date_to": active[1], "page": active[2], "attempts": active[3]} if active else None,
+    }
+    (output_root / "progress.json").write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
+
+
+def _load_occurrences(connection: duckdb.DuckDBPyConnection, source_sha: str, run_id: str, output_root: Path) -> list[tuple]:
+    occurrences = []
+    rows = connection.execute(
+        "SELECT DISTINCT r.response_hash,r.response_path,j.date_from,j.date_to "
+        "FROM bulk_responses r JOIN bulk_jobs j ON j.job_id=r.job_id "
+        "WHERE r.run_id=? AND r.http_status=200 ORDER BY r.response_hash",
+        [run_id],
+    ).fetchall()
+    for digest, response_path, date_from, date_to in rows:
+        payload = Path(response_path).read_bytes()
+        data = json.loads(payload)
+        for release in data.get("releases", []):
+            if release.get("ocid"):
+                occurrences.append((source_sha, run_id, release.get("ocid"), release.get("id"), release.get("date"), json.dumps(release, sort_keys=True), digest, str(output_root / "responses" / f"{digest}.json"), date_from, date_to))
+    return occurrences
+
+
 def plan() -> dict:
     ensure_data_dirs("za")
     roots = country_paths("za")
@@ -58,7 +90,21 @@ def run(run_id: str, *, timeout: int = 90, rate: float = 1.0) -> dict:
     output_root = roots.enriched / run_id
     connection = duckdb.connect(str(output_root / "ledger.duckdb"))
     _setup(connection)
+    prior_progress = output_root / "progress.json"
+    if prior_progress.exists():
+        previous = json.loads(prior_progress.read_text(encoding="utf-8"))
+        if previous.get("state") == "running":
+            _write_progress(output_root, run_id, connection, "interrupted")
+    connection.execute("UPDATE bulk_jobs SET status='retryable_failed', error_class='LeaseRecovery', error_message='recovered after interrupted run', updated_at=? WHERE run_id=? AND status='running'", [utc_now(), run_id])
     source_sha = connection.execute("SELECT ?", [source_hash(roots.raw / "ocds_full.jsonl.gz", roots.raw / "manifest.json")]).fetchone()[0]
+    _write_progress(output_root, run_id, connection, "running")
+
+    def mark_interrupted(signum, frame):
+        _write_progress(output_root, run_id, connection, "interrupted")
+        raise KeyboardInterrupt(f"received signal {signum}")
+
+    signal.signal(signal.SIGINT, mark_interrupted)
+    signal.signal(signal.SIGTERM, mark_interrupted)
     occurrences = []
     next_at = 0.0
     while True:
@@ -93,10 +139,13 @@ def run(run_id: str, *, timeout: int = 90, rate: float = 1.0) -> dict:
                     connection.execute("INSERT INTO bulk_jobs VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, NULL, NULL, NULL, ?, ?)", [_job_id(run_id, next_url), run_id, next_page, date_from, date_to, next_url, utc_now(), utc_now()])
             connection.execute("UPDATE bulk_jobs SET status='succeeded', http_status=?, response_hash=?, response_path=?, updated_at=? WHERE job_id=?", [status, digest, str(path), utc_now(), job_id])
             connection.execute("INSERT INTO bulk_events VALUES (nextval('event_seq'), ?, ?, 'succeeded', ?, ?, NULL, NULL, ?)", [job_id, attempt, status, digest, utc_now()])
+            _write_progress(output_root, run_id, connection, "running")
         except Exception as error:
             state = "retryable_failed" if attempt < 6 else "permanent_failed"
             connection.execute("UPDATE bulk_jobs SET status=?, error_class=?, error_message=?, updated_at=? WHERE job_id=?", [state, type(error).__name__, str(error), utc_now(), job_id])
             connection.execute("INSERT INTO bulk_events VALUES (nextval('event_seq'), ?, ?, ?, NULL, NULL, ?, ?, ?)", [job_id, attempt, state, type(error).__name__, str(error), utc_now()])
+            _write_progress(output_root, run_id, connection, "running")
+    occurrences = _load_occurrences(connection, source_sha, run_id, output_root)
     columns = "source_snapshot_sha256,run_id,ocid,release_id,release_date,raw_json,response_hash,response_path,date_from,date_to"
     connection.execute("CREATE OR REPLACE TABLE sa_api_bulk_releases AS SELECT * FROM (VALUES " + ",".join("(" + ",".join("?" for _ in columns.split(",")) + ")" for _ in occurrences) + f") AS t({columns})" if occurrences else "CREATE OR REPLACE TABLE sa_api_bulk_releases AS SELECT CAST(NULL AS VARCHAR) AS ocid WHERE FALSE", [value for row in occurrences for value in row] if occurrences else [])
     parquet = output_root / "sa_api_bulk_releases.parquet"
@@ -107,6 +156,7 @@ def run(run_id: str, *, timeout: int = 90, rate: float = 1.0) -> dict:
     report = {"run_id": run_id, "source_snapshot_sha256": source_sha, "job_counts": counts, "release_observations": len(occurrences), "unique_observed_ocids": len({row[2] for row in occurrences}), "canonical_ocids": canonical_count, "canonical_matches": matched, "coverage": matched / canonical_count if canonical_count else 0, "parquet": str(parquet), "status": "pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn"}
     (output_root / "sa_api_bulk_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     write_run_manifest("sa-api-bulk", source_sha, {"report": report, "output_root": str(output_root)}, run=run_id, working_root=roots.working)
+    _write_progress(output_root, run_id, connection, "complete")
     connection.close()
     return report
 
