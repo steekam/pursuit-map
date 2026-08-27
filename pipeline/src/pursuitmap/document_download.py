@@ -160,7 +160,7 @@ def run(run_root: Path, *, timeout: int = 60, max_attempts: int = 4, rate_per_se
         return JobOutcome(status="failed", retryable=retryable, error_class=error_class, error_message="HTTP response", response_hash=digest, retry_after_seconds=retry_after)
 
     _write_progress(connection, run_root, phase="running", limit=limit)
-    runner_report = runner.run(handler, progress_path=run_root / "progress.json")
+    runner_report = runner.run(handler, progress_path=run_root / "document_runner_progress.json")
     connection.execute("UPDATE download_jobs SET status='retryable_failed' WHERE job_id IN (SELECT job_id FROM jobs WHERE run_id=? AND status='retryable_failed')", [run_root.name])
     connection.execute("UPDATE download_jobs SET status='permanent_failed' WHERE job_id IN (SELECT job_id FROM jobs WHERE run_id=? AND status='permanent_failed')", [run_root.name])
     counts = {row[0]: row[1] for row in connection.execute("SELECT status, count(*) FROM download_jobs GROUP BY 1").fetchall()}
