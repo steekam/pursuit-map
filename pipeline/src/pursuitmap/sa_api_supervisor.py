@@ -3,7 +3,6 @@ from __future__ import annotations
 import concurrent.futures
 import hashlib
 import json
-import random
 import signal
 import threading
 import time
@@ -15,6 +14,7 @@ import duckdb
 from .paths import canonical_root, country_paths
 from .provenance import source_hash, utc_now, write_run_manifest
 from .sa_api_enrichment import _cache_connection, _cache_key, _fetch, _sha256
+from .http_client import RateLimiter as _TransportLimiter
 
 
 RETRY_STATUSES = {408, 425, 429, 500, 502, 503, 504}
@@ -105,24 +105,7 @@ def plan(parent_run_id: str) -> dict:
     return {"run_id": run_id, "parent_run_id": parent_run_id, "source_snapshot_sha256": source_sha, "seeded_bulk_matches": seeded_bulk, "seeded_cache_hits": seeded_cache, "detail_jobs": len(rows), "output_root": str(root)}
 
 
-class _Limiter:
-    def __init__(self, rate: float):
-        self.rate = rate
-        self.lock = threading.Lock()
-        self.next_at = 0.0
-
-    def wait(self, retry_after: float = 0.0) -> float:
-        with self.lock:
-            now = time.monotonic()
-            target = max(self.next_at, now) + retry_after + random.random()
-            self.next_at = target + 1.0 / self.rate
-            delay = max(0.0, target - now)
-        if delay:
-            time.sleep(delay)
-        return delay
-
-
-def _request(url: str, timeout: int, limiter: _Limiter) -> tuple[int, dict, bytes, float]:
+def _request(url: str, timeout: int, limiter: _TransportLimiter) -> tuple[int, dict, bytes, float]:
     waited = limiter.wait()
     try:
         status, headers, payload = _fetch(url, timeout)
@@ -151,7 +134,7 @@ def _classify(error: Exception | None, status: int | None, attempt: int) -> tupl
     return "permanent_failed", False, "unknown"
 
 
-def _fetch_job(job: tuple, timeout: int, limiter: _Limiter) -> dict:
+def _fetch_job(job: tuple, timeout: int, limiter: _TransportLimiter) -> dict:
     job_id, ocid, url, attempts = job
     attempt = attempts + 1
     try:
@@ -198,7 +181,7 @@ def run(run_id: str, *, timeout: int = 90, rate: float = 1.0, max_concurrency: i
 
     signal.signal(signal.SIGINT, interrupted)
     signal.signal(signal.SIGTERM, interrupted)
-    _capacity_limiter = _Limiter(rate)
+    _capacity_limiter = _TransportLimiter(rate, 1.0)
     probe_rows = c.execute("SELECT job_id,expected_ocid,endpoint,attempts FROM supervisor_jobs WHERE run_id=? AND status='pending' ORDER BY expected_ocid LIMIT 4", [run_id]).fetchall()
     selected = 1
     for level in CAPACITY_LEVELS:

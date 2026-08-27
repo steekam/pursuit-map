@@ -1,0 +1,15 @@
+{
+  "name": "south-africa-etenders-api",
+  "source_version": "etenders-ocds-api-v1",
+  "base_url": "https://ocds-api.etenders.gov.za",
+  "rate_per_second": 1.0,
+  "jitter_seconds": 1.0,
+  "timeout_seconds": 90,
+  "max_attempts": 6,
+  "max_backoff_seconds": 600,
+  "circuit_429_threshold": 3,
+  "circuit_pause_seconds": 60,
+  "retry_statuses": [408, 425, 429, 500, 502, 503, 504],
+  "user_agent": "PursuitMap/0.1 durable-http",
+  "accept": "application/json"
+}
