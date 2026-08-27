@@ -41,6 +41,7 @@ from .network_preflight import check as network_check
 from .sa_api_enrichment import plan as sa_api_plan, run as sa_api_run, report as sa_api_report
 from .sa_api_bulk import plan as sa_bulk_plan, run as sa_bulk_run, report as sa_bulk_report
 from .sa_api_supervisor import plan as sa_supervise_plan, run as sa_supervise_run, report as sa_supervise_report, status as sa_supervise_status
+from .sa_api_probe import plan as sa_probe_plan, run as sa_probe_run, report as sa_probe_report, status as sa_probe_status
 
 
 def main() -> None:
@@ -89,6 +90,17 @@ def main() -> None:
     sa_bulk_run_parser.add_argument("--timeout", type=int, default=90)
     sa_bulk_report_parser = sa_bulk_subparsers.add_parser("report")
     sa_bulk_report_parser.add_argument("--run-id", required=True)
+
+    sa_probe_parser = commands.add_parser("sa-api-probe")
+    sa_probe_subparsers = sa_probe_parser.add_subparsers(dest="sa_probe_action", required=True)
+    sa_probe_plan_parser = sa_probe_subparsers.add_parser("plan")
+    sa_probe_plan_parser.add_argument("--parent-run-id", required=True)
+    sa_probe_run_parser = sa_probe_subparsers.add_parser("run")
+    sa_probe_run_parser.add_argument("--run-id", required=True)
+    sa_probe_run_parser.add_argument("--timeout", type=int, default=90)
+    for action in ("status", "report"):
+        reader = sa_probe_subparsers.add_parser(action)
+        reader.add_argument("--run-id", required=True)
 
     sa_supervise_parser = commands.add_parser("sa-api-supervise")
     sa_supervise_subparsers = sa_supervise_parser.add_subparsers(dest="sa_supervise_action", required=True)
@@ -282,6 +294,18 @@ def main() -> None:
             result = sa_supervise_status(args.run_id)
         else:
             result = sa_supervise_report(args.run_id)
+        print(json.dumps(result, indent=2, default=str))
+        return
+    if args.command == "sa-api-probe":
+        network_check("https://ocds-api.etenders.gov.za") if args.sa_probe_action == "run" else None
+        if args.sa_probe_action == "plan":
+            result = sa_probe_plan(args.parent_run_id)
+        elif args.sa_probe_action == "run":
+            result = sa_probe_run(args.run_id, timeout=args.timeout)
+        elif args.sa_probe_action == "status":
+            result = sa_probe_status(args.run_id)
+        else:
+            result = sa_probe_report(args.run_id)
         print(json.dumps(result, indent=2, default=str))
         return
     live_source_actions = {"run", "resume", "gap-run", "gap-resume", "partition-run", "partition-resume", "supervise"}
