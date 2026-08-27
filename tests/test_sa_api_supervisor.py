@@ -4,7 +4,8 @@ import json
 
 import duckdb
 
-from pursuitmap.sa_api_supervisor import _classify, _job_id, _setup
+from pursuitmap.http_client import HttpResult
+from pursuitmap.sa_api_supervisor import _classify, _fetch_job, _job_id, _setup
 
 
 def test_job_id_is_deterministic_and_scoped():
@@ -30,3 +31,16 @@ def test_supervisor_ledger_has_required_tables(tmp_path):
         "supervisor_probe_results",
     }
     connection.close()
+
+
+def test_fetch_job_uses_shared_http_result_and_validates_ocid():
+    class Client:
+        def request(self, url):
+            assert url == "https://example.test/ocds-1"
+            return HttpResult(200, {"Content-Type": "application/json"}, b'{"id":"release-1","ocid":"ocds-1","tender":{}}', 2, 3.5)
+
+    result = _fetch_job(("job-1", "ocds-1", "https://example.test/ocds-1", 0), Client())
+
+    assert result["state"] == "succeeded"
+    assert result["transport_attempts"] == 2
+    assert result["waited"] == 3.5

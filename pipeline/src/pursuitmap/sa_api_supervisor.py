@@ -6,15 +6,14 @@ import json
 import signal
 import threading
 import time
-import urllib.error
 from pathlib import Path
 
 import duckdb
 
 from .paths import canonical_root, country_paths
 from .provenance import source_hash, utc_now, write_run_manifest
-from .sa_api_enrichment import _cache_connection, _cache_key, _fetch, _sha256
-from .http_client import RateLimiter as _TransportLimiter
+from .sa_api_enrichment import _cache_connection, _cache_key, _sha256
+from .http_client import HttpClient, HttpPolicy
 
 
 RETRY_STATUSES = {408, 425, 429, 500, 502, 503, 504}
@@ -105,27 +104,12 @@ def plan(parent_run_id: str) -> dict:
     return {"run_id": run_id, "parent_run_id": parent_run_id, "source_snapshot_sha256": source_sha, "seeded_bulk_matches": seeded_bulk, "seeded_cache_hits": seeded_cache, "detail_jobs": len(rows), "output_root": str(root)}
 
 
-def _request(url: str, timeout: int, limiter: _TransportLimiter) -> tuple[int, dict, bytes, float]:
-    waited = limiter.wait()
-    try:
-        status, headers, payload = _fetch(url, timeout)
-        if status == 429:
-            retry_after = headers.get("Retry-After")
-            try:
-                limiter.wait(float(retry_after)) if retry_after else None
-            except ValueError:
-                pass
-        return status, headers, payload, waited
-    except (TimeoutError, urllib.error.URLError) as error:
-        raise error
-
-
 def _classify(error: Exception | None, status: int | None, attempt: int) -> tuple[str, bool, str]:
     if status in (400, 401, 403, 404):
         return "permanent_failed", False, f"http_{status}"
     if status in RETRY_STATUSES:
         return ("retryable_failed" if attempt < MAX_ATTEMPTS else "permanent_failed", attempt < MAX_ATTEMPTS, f"http_{status}")
-    if isinstance(error, (TimeoutError, urllib.error.URLError, ConnectionError)):
+    if isinstance(error, (TimeoutError, ConnectionError)):
         return ("retryable_failed" if attempt < MAX_ATTEMPTS else "permanent_failed", attempt < MAX_ATTEMPTS, type(error).__name__)
     if isinstance(error, json.JSONDecodeError):
         return "permanent_failed", False, "malformed_json"
@@ -134,23 +118,22 @@ def _classify(error: Exception | None, status: int | None, attempt: int) -> tupl
     return "permanent_failed", False, "unknown"
 
 
-def _fetch_job(job: tuple, timeout: int, limiter: _TransportLimiter) -> dict:
+def _fetch_job(job: tuple, client: HttpClient) -> dict:
     job_id, ocid, url, attempts = job
-    attempt = attempts + 1
-    try:
-        status, headers, payload, waited = _request(url, timeout, limiter)
-        digest = _sha256(payload)
-        if status == 200 and not payload:
-            raise ValueError("empty_http_200")
-        if status == 200:
-            release = json.loads(payload)
+    result = client.request(url)
+    digest = _sha256(result.body) if result.body else None
+    if result.status == 200:
+        try:
+            if not result.body:
+                raise ValueError("empty_http_200")
+            release = json.loads(result.body)
             if release.get("ocid") != ocid or not release.get("id") or not isinstance(release.get("tender"), dict):
                 raise ValueError("source_record_mismatch_or_invalid_release")
-        state, retryable, error_class = ("succeeded", False, None) if status == 200 else _classify(None, status, attempt)
-        return {"job_id": job_id, "ocid": ocid, "status": status, "headers": headers, "payload": payload, "digest": digest, "waited": waited, "state": state, "retryable": retryable, "error_class": error_class, "error_message": None}
-    except Exception as error:
-        state, retryable, error_class = _classify(error, None, attempt)
-        return {"job_id": job_id, "ocid": ocid, "status": None, "headers": {}, "payload": b"", "digest": None, "waited": 0.0, "state": state, "retryable": retryable, "error_class": error_class, "error_message": str(error)}
+        except (json.JSONDecodeError, ValueError) as error:
+            return {"job_id": job_id, "ocid": ocid, "status": 200, "headers": result.headers, "payload": result.body, "digest": digest, "waited": result.wait_seconds, "state": "permanent_failed", "retryable": False, "error_class": "malformed_json" if isinstance(error, json.JSONDecodeError) else str(error), "error_message": str(error), "transport_attempts": result.attempts}
+        return {"job_id": job_id, "ocid": ocid, "status": 200, "headers": result.headers, "payload": result.body, "digest": digest, "waited": result.wait_seconds, "state": "succeeded", "retryable": False, "error_class": None, "error_message": None, "transport_attempts": result.attempts}
+    state, retryable, error_class = _classify(None, result.status, MAX_ATTEMPTS)
+    return {"job_id": job_id, "ocid": ocid, "status": result.status, "headers": result.headers, "payload": result.body, "digest": digest, "waited": result.wait_seconds, "state": state, "retryable": retryable, "error_class": result.error_class or error_class, "error_message": result.error_message, "transport_attempts": result.attempts}
 
 
 def _write_match(c, run_id, parent_run_id, result, root):
@@ -181,7 +164,7 @@ def run(run_id: str, *, timeout: int = 90, rate: float = 1.0, max_concurrency: i
 
     signal.signal(signal.SIGINT, interrupted)
     signal.signal(signal.SIGTERM, interrupted)
-    _capacity_limiter = _TransportLimiter(rate, 1.0)
+    client = HttpClient(HttpPolicy(rate_per_second=rate, jitter_seconds=1.0, timeout_seconds=timeout, max_attempts=MAX_ATTEMPTS))
     probe_rows = c.execute("SELECT job_id,expected_ocid,endpoint,attempts FROM supervisor_jobs WHERE run_id=? AND status='pending' ORDER BY expected_ocid LIMIT 4", [run_id]).fetchall()
     selected = 1
     for level in CAPACITY_LEVELS:
@@ -189,7 +172,7 @@ def run(run_id: str, *, timeout: int = 90, rate: float = 1.0, max_concurrency: i
             break
         started = time.monotonic()
         with concurrent.futures.ThreadPoolExecutor(max_workers=level) as pool:
-            results = list(pool.map(lambda job: _fetch_job(job, timeout, _capacity_limiter), probe_rows))
+            results = list(pool.map(lambda job: _fetch_job(job, client), probe_rows))
         elapsed = time.monotonic() - started
         successes = sum(r["state"] == "succeeded" for r in results)
         statuses = [r["status"] for r in results]
@@ -203,7 +186,7 @@ def run(run_id: str, *, timeout: int = 90, rate: float = 1.0, max_concurrency: i
         if not jobs:
             break
         with concurrent.futures.ThreadPoolExecutor(max_workers=selected) as pool:
-            results = list(pool.map(lambda job: _fetch_job(job, timeout, _capacity_limiter), jobs))
+            results = list(pool.map(lambda job: _fetch_job(job, client), jobs))
         for result in results:
             attempt = c.execute("SELECT attempts FROM supervisor_jobs WHERE job_id=?", [result["job_id"]]).fetchone()[0] + 1
             c.execute("UPDATE supervisor_jobs SET status=?, attempts=?, http_status=?, response_hash=?, error_class=?, error_message=?, updated_at=? WHERE job_id=?", [result["state"], attempt, result["status"], result["digest"], result["error_class"], result["error_message"], utc_now(), result["job_id"]])
