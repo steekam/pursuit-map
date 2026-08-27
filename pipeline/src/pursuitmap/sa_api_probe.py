@@ -94,7 +94,7 @@ def _one(job, client: HttpClient, root: Path) -> dict:
                 error_class, error_message = "response_validation", "response did not validate for the request kind"
         except json.JSONDecodeError as error:
             error_class, error_message = "malformed_json", str(error)
-    return {"job_id": job_id, "ocid": expected_ocid, "status": "succeeded" if valid else "failed", "http_status": result.status, "digest": digest, "path": str(path) if path else None, "latency": latency, "attempts": result.attempts, "wait": result.wait_seconds, "headers": result.headers, "error_class": error_class, "error_message": error_message, "valid": valid}
+    return {"job_id": job_id, "request_kind": request_kind, "ocid": expected_ocid, "status": "succeeded" if valid else "failed", "http_status": result.status, "digest": digest, "path": str(path) if path else None, "latency": latency, "attempts": result.attempts, "wait": result.wait_seconds, "headers": result.headers, "error_class": error_class, "error_message": error_message, "valid": valid}
 
 
 def run(run_id: str, *, timeout: int = 90) -> dict:
@@ -105,7 +105,7 @@ def run(run_id: str, *, timeout: int = 90) -> dict:
     source_sha = source_hash(roots.raw / "ocds_full.jsonl.gz", roots.raw / "manifest.json")
     stages = c.execute("SELECT DISTINCT stage_id,rate_per_second,concurrency FROM probe_jobs WHERE run_id=? ORDER BY stage_id", [run_id]).fetchall()
     all_results = []
-    for stage_id, rate, concurrency in stages:
+    for stage_index, (stage_id, rate, concurrency) in enumerate(stages, 1):
         jobs = c.execute("SELECT job_id,request_kind,expected_ocid,url,attempts FROM probe_jobs WHERE run_id=? AND stage_id=? AND status='pending' ORDER BY job_id", [run_id, stage_id]).fetchall()
         policy = HttpPolicy(rate_per_second=rate, jitter_seconds=1.0, timeout_seconds=timeout, max_attempts=2)
         client = HttpClient(policy)
@@ -123,10 +123,11 @@ def run(run_id: str, *, timeout: int = 90) -> dict:
             attempt = result["attempts"]
             c.execute("UPDATE probe_jobs SET status=?, attempts=?, http_status=?, response_hash=?, response_path=?, error_class=?, error_message=?, latency_seconds=?, updated_at=? WHERE job_id=?", [result["status"], attempt, result["http_status"], result["digest"], result["path"], result["error_class"], result["error_message"], result["latency"], utc_now(), result["job_id"]])
             c.execute("INSERT INTO probe_events VALUES (nextval('probe_event_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [result["job_id"], attempt, result["status"], result["http_status"], result["wait"], result["error_class"], result["error_message"], result["digest"], json.dumps(result["headers"], sort_keys=True), utc_now()])
+            _progress(c, root, run_id, stage_id, current_rate=rate, current_concurrency=concurrency, completed_stage=stage_index, last_request={"job_id": result["job_id"], "request_kind": result.get("request_kind"), "status": result["http_status"], "error_class": result["error_class"]}, next_action="finish_stage")
         rpm = len(results) / elapsed * 60 if elapsed else 0
         row = [stage_id, run_id, rate, concurrency, len(results), succeeded, succeeded, statuses.count(429), sum(s is not None and s >= 500 for s in statuses), sum(r["error_class"] == "TimeoutError" for r in results), sum(not r["valid"] and r["error_class"] not in {"TimeoutError"} and not (r["http_status"] == 429 or (r["http_status"] and r["http_status"] >= 500)) for r in results), statistics.median(latencies) if latencies else 0, p95, max(latencies) if latencies else 0, rpm, 0, succeeded / len(results) if results else 0, succeeded / elapsed * 60 if elapsed else 0, passed, reason, utc_now()]
         c.execute("INSERT OR REPLACE INTO probe_stage_results VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
-        _progress(c, root, run_id, stage_id, current_rate=rate, current_concurrency=concurrency, completed_stages=len(all_results) + 1, next_action="next_stage" if passed else "reduce_capacity")
+        _progress(c, root, run_id, stage_id, current_rate=rate, current_concurrency=concurrency, completed_stages=stage_index, next_action="next_stage" if passed else "reduce_capacity")
         all_results.extend(results)
         if not passed:
             break
@@ -144,7 +145,8 @@ def _materialize(c, root: Path, run_id: str, source_sha: str) -> None:
     last = stages[-1] if stages else None
     passed = [r for r in stages if r[18]]
     selected = max(passed, key=lambda r: (r[2], r[3])) if passed else None
-    final = {"run_id": run_id, "source_snapshot_sha256": source_sha, "stages_tested": len(stages), "highest_safe_rate_per_second": selected[2] if selected else None, "highest_safe_concurrency": selected[3] if selected else None, "selected_rate_per_second": selected[2] * 0.75 if selected else None, "selected_concurrency": selected[3] if selected else None, "stage_results": [{"stage_id": r[0], "rate_per_second": r[2], "concurrency": r[3], "requested": r[4], "succeeded": r[5], "canonical_matches": r[6], "passed": r[18], "rpm": r[14], "rejection_reason": r[19]} for r in stages], "terminal_condition": "capacity_boundary_found" if stages and not stages[-1][18] else "approved_stages_exhausted", "outputs": {"results": str(root / "sa_api_capacity_probe_results.parquet"), "headers": str(root / "sa_api_capacity_probe_headers.parquet")}}
+    kinds = [{"request_kind": r[0], "requested": r[1], "succeeded": r[2], "http_429": r[3], "http_5xx": r[4], "timeouts": r[5]} for r in c.execute("SELECT request_kind,count(*),count(*) FILTER (WHERE status='succeeded'),count(*) FILTER (WHERE http_status=429),count(*) FILTER (WHERE http_status>=500),count(*) FILTER (WHERE error_class='TimeoutError') FROM probe_jobs WHERE run_id=? GROUP BY request_kind ORDER BY request_kind", [run_id]).fetchall()]
+    final = {"run_id": run_id, "source_snapshot_sha256": source_sha, "stages_tested": len(stages), "highest_safe_rate_per_second": selected[2] if selected else None, "highest_safe_concurrency": selected[3] if selected else None, "selected_rate_per_second": selected[2] * 0.75 if selected else None, "selected_concurrency": selected[3] if selected else None, "request_kind_results": kinds, "stage_results": [{"stage_id": r[0], "rate_per_second": r[2], "concurrency": r[3], "requested": r[4], "succeeded": r[5], "canonical_matches": r[6], "passed": r[18], "rpm": r[14], "rejection_reason": r[19]} for r in stages], "terminal_condition": "capacity_boundary_found" if stages and not stages[-1][18] else "approved_stages_exhausted", "outputs": {"results": str(root / "sa_api_capacity_probe_results.parquet"), "headers": str(root / "sa_api_capacity_probe_headers.parquet")}}
     (root / "sa_api_capacity_probe_report.json").write_text(json.dumps(final, indent=2) + "\n", encoding="utf-8")
     (root / "sa_api_capacity_probe_report.md").write_text("# South Africa API capacity probe\n\n" + "\n".join(f"- {k}: {v}" for k, v in final.items() if k not in {"stage_results", "outputs"}) + "\n", encoding="utf-8")
     write_run_manifest("sa-api-capacity-probe", source_sha, {"report": final, "output_root": str(root)}, run=run_id, working_root=country_paths("za").working)
