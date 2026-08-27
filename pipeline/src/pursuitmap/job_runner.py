@@ -28,6 +28,7 @@ class JobOutcome:
     error_class: str | None = None
     error_message: str | None = None
     response_hash: str | None = None
+    retry_after_seconds: float | None = None
 
 
 Handler = Callable[[dict[str, Any]], JobOutcome]
@@ -85,7 +86,8 @@ class DurableJobRunner:
             next_at = now
         elif outcome.retryable and attempt < self.policy.max_attempts:
             state = "retryable_failed"
-            delay = min(self.policy.max_backoff_seconds, 2 ** attempt) + self.randomizer() * self.policy.jitter_seconds
+            backoff = min(self.policy.max_backoff_seconds, 2 ** attempt) + self.randomizer() * self.policy.jitter_seconds
+            delay = max(backoff, outcome.retry_after_seconds or 0.0)
             next_at = now + delay
         else:
             state = "permanent_failed"

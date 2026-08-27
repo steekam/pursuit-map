@@ -15,6 +15,8 @@ import duckdb
 
 from .paths import country_paths, ensure_data_dirs
 from .provenance import run_id, utc_now
+from .http_client import RateLimiter, parse_retry_after
+from .job_runner import DurableJobRunner, JobOutcome, RunnerPolicy
 
 
 RETRY_STATUSES = (408, 425, 429, 500, 502, 503, 504)
@@ -129,60 +131,38 @@ def run(run_root: Path, *, timeout: int = 60, max_attempts: int = 4, rate_per_se
     connection = duckdb.connect(str(ledger_path))
     _create_ledger(connection)
     (run_root / "files").mkdir(exist_ok=True)
-    next_request_at = 0.0
-    processed = 0
+    rows = connection.execute("SELECT job_id, normalized_url FROM download_jobs WHERE status IN ('pending', 'retryable_failed') ORDER BY job_id" + (f" LIMIT {int(limit)}" if limit is not None else "")).fetchall()
+    runner = DurableJobRunner(connection, run_root.name, policy=RunnerPolicy(max_attempts=max_attempts, jitter_seconds=jitter_seconds), sleeper=sleep, randomizer=randomizer)
+    limiter = RateLimiter(rate_per_second, jitter_seconds, sleeper=sleep, randomizer=randomizer)
+    for job_id, url in rows:
+        runner.add(job_id, {"job_id": job_id, "url": url})
+
+    def handler(payload: dict) -> JobOutcome:
+        job_id, url = payload["job_id"], payload["url"]
+        limiter.wait()
+        status, headers, response = _fetch(url, timeout)
+        content_type = _content_type(headers, url)
+        digest = _sha256(response)
+        path = run_root / "files" / digest
+        if response and not path.exists():
+            path.write_bytes(response)
+        retry_after = parse_retry_after(headers.get("Retry-After"))
+        retryable = status in RETRY_STATUSES
+        valid = status == 200 and _valid_content_type(content_type, url, response)
+        if valid:
+            references = connection.execute("SELECT source_run_id, ocid, release_id, document_id, source_url FROM download_jobs WHERE job_id = ?", [job_id]).fetchone()
+            input_manifest = {"path": str(path), "source_url": references[4], "source_run_id": references[0], "ocids": json.loads(references[1]), "release_ids": json.loads(references[2]), "document_ids": json.loads(references[3]), "response_hash": digest, "content_type": content_type, "status": "captured"}
+            (run_root / "files" / f"{digest}.input.json").write_text(json.dumps(input_manifest, indent=2) + "\n", encoding="utf-8")
+            connection.execute("UPDATE download_jobs SET status='succeeded', attempts=attempts+1, http_status=?, content_type=?, response_hash=?, response_path=?, validation_status='pass', updated_at=? WHERE job_id=?", [status, content_type, digest, str(path), utc_now(), job_id])
+            return JobOutcome(response_hash=digest)
+        error_class = f"http_{status}" if status else "invalid_content"
+        connection.execute("UPDATE download_jobs SET http_status=?, content_type=?, response_hash=?, response_path=?, validation_status='fail', error_class=?, error_message=?, updated_at=? WHERE job_id=?", [status, content_type, digest, str(path) if response else None, error_class, "empty or HTML document response" if status == 200 else "HTTP response", utc_now(), job_id])
+        return JobOutcome(status="failed", retryable=retryable, error_class=error_class, error_message="HTTP response", response_hash=digest, retry_after_seconds=retry_after)
+
     _write_progress(connection, run_root, phase="running", limit=limit)
-    while True:
-        if limit is not None and processed >= limit:
-            break
-        job = connection.execute("SELECT job_id, normalized_url, status, attempts FROM download_jobs WHERE status IN ('pending', 'retryable_failed') ORDER BY job_id LIMIT 1").fetchone()
-        if job is None:
-            break
-        job_id, url, _, attempts = job
-        processed += 1
-        attempt = attempts + 1
-        delay = max(0.0, next_request_at - time.monotonic()) + randomizer() * jitter_seconds
-        if delay:
-            sleep(delay)
-        next_request_at = max(next_request_at, time.monotonic()) + (1.0 / rate_per_second)
-        connection.execute("UPDATE download_jobs SET status = 'running', attempts = ?, updated_at = ? WHERE job_id = ?", [attempt, utc_now(), job_id])
-        try:
-            status, headers, payload = _fetch(url, timeout)
-            content_type = _content_type(headers, url)
-            digest = _sha256(payload)
-            if status == 200 and _valid_content_type(content_type, url, payload):
-                path = run_root / "files" / digest
-                if not path.exists():
-                    path.write_bytes(payload)
-                references = connection.execute("SELECT source_run_id, ocid, release_id, document_id, source_url FROM download_jobs WHERE job_id = ?", [job_id]).fetchone()
-                input_manifest = {
-                    "path": str(path), "source_url": references[4], "source_run_id": references[0],
-                    "ocids": json.loads(references[1]), "release_ids": json.loads(references[2]),
-                    "document_ids": json.loads(references[3]), "response_hash": digest,
-                    "content_type": content_type, "status": "captured",
-                }
-                (run_root / "files" / f"{digest}.input.json").write_text(json.dumps(input_manifest, indent=2) + "\n", encoding="utf-8")
-                connection.execute("UPDATE download_jobs SET status = 'succeeded', http_status = ?, content_type = ?, response_hash = ?, response_path = ?, validation_status = 'pass', updated_at = ? WHERE job_id = ?", [status, content_type, digest, str(path), utc_now(), job_id])
-                connection.execute("INSERT INTO download_events VALUES (nextval('download_event_seq'), ?, ?, 'succeeded', ?, ?, NULL, NULL, ?)", [job_id, attempt, status, digest, utc_now()])
-                _write_progress(connection, run_root, phase="running", limit=limit)
-                continue
-            retryable = status in RETRY_STATUSES and attempt < max_attempts
-            state = "retryable_failed" if retryable else "permanent_failed"
-            error_class = f"http_{status}" if status else "invalid_content"
-            connection.execute("UPDATE download_jobs SET status = ?, http_status = ?, content_type = ?, response_hash = ?, validation_status = ?, error_class = ?, error_message = ?, updated_at = ? WHERE job_id = ?", [state, status, content_type, digest, "fail", error_class, "empty or HTML document response" if status == 200 else "HTTP response", utc_now(), job_id])
-            connection.execute("INSERT INTO download_events VALUES (nextval('download_event_seq'), ?, ?, ?, ?, ?, ?, ?, ?)", [job_id, attempt, state, status, digest, error_class, "HTTP response", utc_now()])
-            if retryable:
-                delay = min(600, 2 ** attempt) + randomizer()
-                sleep(delay)
-            _write_progress(connection, run_root, phase="running", limit=limit)
-        except Exception as error:
-            retryable = attempt < max_attempts
-            state = "retryable_failed" if retryable else "permanent_failed"
-            connection.execute("UPDATE download_jobs SET status = ?, error_class = ?, error_message = ?, updated_at = ? WHERE job_id = ?", [state, error.__class__.__name__, str(error), utc_now(), job_id])
-            connection.execute("INSERT INTO download_events VALUES (nextval('download_event_seq'), ?, ?, ?, NULL, NULL, ?, ?, ?)", [job_id, attempt, state, error.__class__.__name__, str(error), utc_now()])
-            if retryable:
-                sleep(min(600, 2 ** attempt) + randomizer())
-            _write_progress(connection, run_root, phase="running", limit=limit)
+    runner_report = runner.run(handler, progress_path=run_root / "progress.json")
+    connection.execute("UPDATE download_jobs SET status='retryable_failed' WHERE job_id IN (SELECT job_id FROM jobs WHERE run_id=? AND status='retryable_failed')", [run_root.name])
+    connection.execute("UPDATE download_jobs SET status='permanent_failed' WHERE job_id IN (SELECT job_id FROM jobs WHERE run_id=? AND status='permanent_failed')", [run_root.name])
     counts = {row[0]: row[1] for row in connection.execute("SELECT status, count(*) FROM download_jobs GROUP BY 1").fetchall()}
     report = {"run_id": run_root.name, "job_counts": counts, "downloaded_files": connection.execute("SELECT count(*) FROM download_jobs WHERE status = 'succeeded'").fetchone()[0], "unique_response_hashes": connection.execute("SELECT count(DISTINCT response_hash) FROM download_jobs WHERE response_hash IS NOT NULL").fetchone()[0], "duplicate_url_jobs": connection.execute("SELECT count(*) - count(DISTINCT normalized_url) FROM download_jobs").fetchone()[0], "ledger": str(ledger_path), "output_root": str(run_root), "status": "pass" if not counts.get("permanent_failed") and not counts.get("retryable_failed") else "warn"}
     _write_progress(connection, run_root, phase="complete" if limit is None or not counts.get("pending") else "paused_limit", limit=limit)
