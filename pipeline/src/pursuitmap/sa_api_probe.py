@@ -16,7 +16,7 @@ from .provenance import source_hash, utc_now, write_run_manifest
 
 API = "https://ocds-api.etenders.gov.za"
 STAGES = ((1.0, 1), (2.0, 1), (4.0, 1), (1.0, 2), (2.0, 2), (4.0, 2), (2.0, 4), (4.0, 4))
-SAMPLE_SIZE = 10
+SAMPLE_SIZE = 8
 
 
 def _id(*parts: object) -> str:
@@ -57,18 +57,25 @@ def plan(parent_run_id: str) -> dict:
     _setup(c)
     canonical = str(canonical_root("za") / "releases.parquet")
     ocids = [r[0] for r in c.execute("SELECT ocid FROM read_parquet(?) WHERE ocid IS NOT NULL ORDER BY sha256(ocid) LIMIT ?", [canonical, SAMPLE_SIZE]).fetchall()]
+    list_requests = (
+        ("small_monthly", f"{API}/api/OCDSReleases?PageNumber=1&PageSize=10&dateFrom=2026-01-01&dateTo=2026-01-31"),
+        ("paginated_monthly", f"{API}/api/OCDSReleases?PageNumber=1&PageSize=1000&dateFrom=2021-01-01&dateTo=2021-12-31"),
+        ("slow_monthly", f"{API}/api/OCDSReleases?PageNumber=1&PageSize=1000&dateFrom=2021-05-01&dateTo=2021-05-31"),
+    )
     for index, (rate, concurrency) in enumerate(STAGES, 1):
         stage_id = f"stage-{index:02d}-{rate:g}rps-c{concurrency}"
         for sample_index, ocid in enumerate(ocids):
             url = f"{API}/api/OCDSReleases/release/{ocid}"
             c.execute("INSERT INTO probe_jobs VALUES (?, ?, ?, ?, ?, 'exact_ocid', ?, ?, 'pending', 0, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)", [_id(run_id, stage_id, sample_index), run_id, stage_id, rate, concurrency, url, ocid, utc_now(), utc_now()])
+        for kind, url in list_requests:
+            c.execute("INSERT INTO probe_jobs VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'pending', 0, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)", [_id(run_id, stage_id, kind), run_id, stage_id, rate, concurrency, kind, url, utc_now(), utc_now()])
     _progress(c, root, run_id, "planned", parent_run_id=parent_run_id, stages=len(STAGES), sample_size=len(ocids), next_action="run_stage_01")
     c.close()
     return {"run_id": run_id, "parent_run_id": parent_run_id, "source_snapshot_sha256": source_sha, "stages": len(STAGES), "sample_size": len(ocids), "output_root": str(root)}
 
 
 def _one(job, client: HttpClient, root: Path) -> dict:
-    job_id, ocid, url, attempts = job
+    job_id, request_kind, expected_ocid, url, attempts = job
     started = time.monotonic()
     result = client.request(url)
     latency = time.monotonic() - started
@@ -82,12 +89,12 @@ def _one(job, client: HttpClient, root: Path) -> dict:
     if result.status == 200:
         try:
             body = json.loads(result.body)
-            valid = body.get("ocid") == ocid and isinstance(body.get("tender"), dict)
+            valid = ((request_kind == "exact_ocid" and body.get("ocid") == expected_ocid and isinstance(body.get("tender"), dict)) or (request_kind != "exact_ocid" and isinstance(body.get("releases"), list)))
             if not valid:
-                error_class, error_message = "ocid_mismatch", "response OCID or tender object did not validate"
+                error_class, error_message = "response_validation", "response did not validate for the request kind"
         except json.JSONDecodeError as error:
             error_class, error_message = "malformed_json", str(error)
-    return {"job_id": job_id, "ocid": ocid, "status": "succeeded" if valid else "failed", "http_status": result.status, "digest": digest, "path": str(path) if path else None, "latency": latency, "attempts": result.attempts, "wait": result.wait_seconds, "headers": result.headers, "error_class": error_class, "error_message": error_message, "valid": valid}
+    return {"job_id": job_id, "ocid": expected_ocid, "status": "succeeded" if valid else "failed", "http_status": result.status, "digest": digest, "path": str(path) if path else None, "latency": latency, "attempts": result.attempts, "wait": result.wait_seconds, "headers": result.headers, "error_class": error_class, "error_message": error_message, "valid": valid}
 
 
 def run(run_id: str, *, timeout: int = 90) -> dict:
@@ -99,7 +106,7 @@ def run(run_id: str, *, timeout: int = 90) -> dict:
     stages = c.execute("SELECT DISTINCT stage_id,rate_per_second,concurrency FROM probe_jobs WHERE run_id=? ORDER BY stage_id", [run_id]).fetchall()
     all_results = []
     for stage_id, rate, concurrency in stages:
-        jobs = c.execute("SELECT job_id,expected_ocid,url,attempts FROM probe_jobs WHERE run_id=? AND stage_id=? AND status='pending' ORDER BY job_id", [run_id, stage_id]).fetchall()
+        jobs = c.execute("SELECT job_id,request_kind,expected_ocid,url,attempts FROM probe_jobs WHERE run_id=? AND stage_id=? AND status='pending' ORDER BY job_id", [run_id, stage_id]).fetchall()
         policy = HttpPolicy(rate_per_second=rate, jitter_seconds=1.0, timeout_seconds=timeout, max_attempts=2)
         client = HttpClient(policy)
         started = time.monotonic()
@@ -131,7 +138,8 @@ def run(run_id: str, *, timeout: int = 90) -> dict:
 
 def _materialize(c, root: Path, run_id: str, source_sha: str) -> None:
     c.execute("COPY probe_stage_results TO ? (FORMAT PARQUET, COMPRESSION ZSTD)", [str(root / "sa_api_capacity_probe_results.parquet")])
-    c.execute("COPY (SELECT event_id,job_id,headers_json FROM probe_events WHERE job_id IN (SELECT job_id FROM probe_jobs WHERE run_id=?)) TO ? (FORMAT PARQUET, COMPRESSION ZSTD)", [run_id, str(root / "sa_api_capacity_probe_headers.parquet")])
+    c.execute("CREATE OR REPLACE TABLE probe_headers AS SELECT event_id,job_id,headers_json FROM probe_events WHERE job_id IN (SELECT job_id FROM probe_jobs WHERE run_id=?)", [run_id])
+    c.execute("COPY probe_headers TO ? (FORMAT PARQUET, COMPRESSION ZSTD)", [str(root / "sa_api_capacity_probe_headers.parquet")])
     stages = c.execute("SELECT * FROM probe_stage_results WHERE run_id=? ORDER BY stage_id", [run_id]).fetchall()
     last = stages[-1] if stages else None
     passed = [r for r in stages if r[18]]
