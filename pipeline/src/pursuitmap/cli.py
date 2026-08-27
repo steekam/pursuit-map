@@ -42,6 +42,7 @@ from .sa_api_enrichment import plan as sa_api_plan, run as sa_api_run, report as
 from .sa_api_bulk import plan as sa_bulk_plan, run as sa_bulk_run, report as sa_bulk_report
 from .sa_api_supervisor import plan as sa_supervise_plan, run as sa_supervise_run, report as sa_supervise_report, status as sa_supervise_status
 from .sa_api_probe import plan as sa_probe_plan, run as sa_probe_run, report as sa_probe_report, status as sa_probe_status
+from .watch import watch
 
 
 def main() -> None:
@@ -69,6 +70,12 @@ def main() -> None:
 
     network_parser = commands.add_parser("network-check")
     network_parser.add_argument("--url", default="https://tenders.go.ke")
+
+    watch_parser = commands.add_parser("watch", help="watch a run progress sidecar")
+    watch_parser.add_argument("--run-root", type=Path)
+    watch_parser.add_argument("--search-root", type=Path, default=Path("data/enriched"))
+    watch_parser.add_argument("--interval", type=int, default=10)
+    watch_parser.add_argument("--once", action="store_true")
 
     sa_api_parser = commands.add_parser("sa-api-enrich")
     sa_api_subparsers = sa_api_parser.add_subparsers(dest="sa_api_action", required=True)
@@ -263,6 +270,9 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "network-check":
         print(json.dumps(network_check(args.url), indent=2))
+        return
+    if args.command == "watch":
+        watch(args.run_root, search_root=args.search_root, interval=args.interval, once=args.once)
         return
     if args.command == "sa-api-enrich":
         network_check("https://ocds-api.etenders.gov.za") if args.sa_api_action == "run" else None
