@@ -20,6 +20,7 @@ RETRY_STATUSES = {408, 425, 429, 500, 502, 503, 504}
 CAPACITY_LEVELS = (1, 2, 4)
 MAX_ATTEMPTS = 6
 ZERO_YIELD_LIMIT = 3
+FLUSHABLE_FAILURES = frozenset({"http_408", "http_425", "http_429", "http_500", "http_502", "http_503", "http_504", "TimeoutError", "URLError", "ConnectionError", "LeaseRecovery"})
 
 
 def _job_id(run_id: str, probe: str, key: str) -> str:
@@ -220,6 +221,31 @@ def report(run_id: str) -> dict:
     if not path.exists():
         raise FileNotFoundError(path)
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def flush_permanent_failures(run_id: str, reasons: tuple[str, ...] = ()) -> dict:
+    """Requeue selected permanent failures for a later supervisor run."""
+    root = country_paths("za").enriched / run_id
+    ledger = root / "ledger.duckdb"
+    if not ledger.exists():
+        raise FileNotFoundError(ledger)
+    selected = frozenset(reasons) if reasons else FLUSHABLE_FAILURES
+    unsupported = sorted(selected - FLUSHABLE_FAILURES)
+    if unsupported:
+        raise ValueError(f"unsupported flush reasons: {', '.join(unsupported)}")
+    c = duckdb.connect(str(ledger))
+    _setup(c)
+    rows = c.execute("SELECT job_id, attempts, error_class FROM supervisor_jobs WHERE run_id=? AND status='permanent_failed' AND error_class IN (SELECT * FROM UNNEST(?))", [run_id, list(selected)]).fetchall()
+    now = utc_now()
+    for job_id, attempts, error_class in rows:
+        c.execute("UPDATE supervisor_jobs SET status='retryable_failed', attempts=0, error_message='requeued by reason-based flush', updated_at=? WHERE job_id=?", [now, job_id])
+        c.execute("INSERT INTO supervisor_events VALUES (nextval('supervisor_event_seq'), ?, ?, 'requeued', ?, TRUE, 0, ?, 'requeued by reason-based flush', NULL, ?)", [job_id, attempts, error_class, now])
+    _progress(c, root, run_id, "flushed", flushed_count=len(rows), flushed_reasons=sorted(selected), next_action="resume")
+    c.close()
+    counts: dict[str, int] = {}
+    for _, _, error_class in rows:
+        counts[error_class] = counts.get(error_class, 0) + 1
+    return {"run_id": run_id, "requeued": len(rows), "reasons": sorted(selected), "counts_by_reason": counts, "next_action": f"pursuitmap sa-api-supervise resume --run-id {run_id}"}
 
 
 def status(run_id: str) -> dict:

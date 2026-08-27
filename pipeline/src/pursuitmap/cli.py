@@ -40,7 +40,7 @@ from .contract_export import capture as contract_export_capture
 from .network_preflight import check as network_check
 from .sa_api_enrichment import plan as sa_api_plan, run as sa_api_run, report as sa_api_report
 from .sa_api_bulk import plan as sa_bulk_plan, run as sa_bulk_run, report as sa_bulk_report
-from .sa_api_supervisor import plan as sa_supervise_plan, run as sa_supervise_run, report as sa_supervise_report, status as sa_supervise_status
+from .sa_api_supervisor import plan as sa_supervise_plan, run as sa_supervise_run, report as sa_supervise_report, status as sa_supervise_status, flush_permanent_failures as sa_supervise_flush
 from .sa_api_probe import plan as sa_probe_plan, run as sa_probe_run, report as sa_probe_report, status as sa_probe_status
 from .watch import watch
 
@@ -122,6 +122,9 @@ def main() -> None:
     for action in ("status", "report"):
         reader = sa_supervise_subparsers.add_parser(action)
         reader.add_argument("--run-id", required=True)
+    sa_supervise_flush_parser = sa_supervise_subparsers.add_parser("flush")
+    sa_supervise_flush_parser.add_argument("--run-id", required=True)
+    sa_supervise_flush_parser.add_argument("--reason", action="append", default=[])
 
     source_enrich_parser = commands.add_parser("enrich-source")
     source_enrich_parser.add_argument("country", choices=["ke"])
@@ -302,6 +305,8 @@ def main() -> None:
             result = sa_supervise_run(args.run_id, rate=args.rate, timeout=args.timeout, max_concurrency=args.max_concurrency)
         elif args.sa_supervise_action == "status":
             result = sa_supervise_status(args.run_id)
+        elif args.sa_supervise_action == "flush":
+            result = sa_supervise_flush(args.run_id, reasons=tuple(args.reason))
         else:
             result = sa_supervise_report(args.run_id)
         print(json.dumps(result, indent=2, default=str))
