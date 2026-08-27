@@ -21,3 +21,7 @@ The runner supports API capture, source enrichment, document downloads, and docu
 ## Consequence
 
 Future adapters can share execution behavior and tests. Existing runners migrate one adapter at a time. Each migration requires fixture tests and a new child run.
+
+## Current adoption
+
+Document downloads and document parsing use the runner. Kenya source enrichment remains on its existing ledger until its list, detail, cache, and eligibility transitions are mapped. The South Africa supervisor remains unchanged while its current run is active.

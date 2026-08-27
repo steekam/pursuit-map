@@ -1,6 +1,6 @@
 # PursuitMap phase tracker
 
-Last updated: 2026-08-25
+Last updated: 2026-08-27
 Current phase: Phase 1.5 — deterministic retrieval lab  
 Overall status: Foundation complete. Discovery layer viable. Gold-set evaluation remains.
 
@@ -25,6 +25,7 @@ Overall status: Foundation complete. Discovery layer viable. Gold-set evaluation
 | Phase 1.5 — document feature review | in progress | [document rule registry](../../config/document-extraction/rules.json), [checkpoint assessment](../checkpoints/2026-08-25-phase-1-5-assessment.md), Kenya run `data/enriched/kenya/documents-source-enrich-combined-20260825T133500Z` | Review the 95-document output, refine noisy rules, and create the gold set. |
 | South Africa document feature pilot | in progress | [pilot build log](../build-log/2026-08-25-south-africa-document-pilot.md), [analysis log](../build-log/2026-08-26-south-africa-document-analysis.md), run `data/enriched/za/documents-south-africa-20260825T195426703850Z` | Review five low-confidence labels, test OCR, and expand the stratified sample. |
 | South Africa API enrichment exploration | complete | [exploration log](../build-log/2026-08-26-south-africa-enrichment-exploration.md), official [API specification](https://ocds-api.etenders.gov.za/swagger/v1/swagger.json) | Build the exact-OCID adapter and measure field coverage and value drift. |
+| Durable background execution | in progress | [ADR-003](../architecture/adr-003-durable-job-runner.md), commits `d5ef3ce`, `2137a82`, `5c15033`, `64d899e` | Migrate Kenya source enrichment. South Africa migration waits for the current run boundary. |
 | Phase 1.5 — Procurement Explorer | not started | — | Select the first explorer slice and its evidence contract. |
 | Phase 2 — reviewed retrieval evaluation | not started | — | Compare lexical, BM25, embedding, or hybrid retrieval only after labels exist. |
 | Phase 3 — entity-resolution study | not started | — | Decide whether deterministic review supports a bounded resolution experiment. |
@@ -44,7 +45,7 @@ Overall status: Foundation complete. Discovery layer viable. Gold-set evaluation
 - Marts, reports, and retrieval outputs use operation run directories.
 - Lifecycle integrity checks pass. Source-quality warnings remain visible.
 - Deterministic ICT retrieval returns 7,529 candidates on the current snapshot.
-- The test suite has 49 passing tests.
+- The test suite has 63 passing tests.
 - Cross-session rules live in [`AGENTS.md`](../../AGENTS.md) and [`pipeline-contract.json`](../../config/pipeline-contract.json).
 - Kenya canonical normalization uses a DuckDB vectorized adapter and reconciles raw release, tender, award, contract, and award-supplier counts.
 
@@ -64,6 +65,8 @@ Overall status: Foundation complete. Discovery layer viable. Gold-set evaluation
 - The first financial-year JSON continuation batch (`mapping-discovery-20260825T010320496668Z-5501335abfb5`) produced 1 successful page, 10 timeout failures, and 0 new mappings during a portal connectivity outage. The run is preserved for retry.
 - Both promotion children passed. The latest combined view has 16,742 unique validated OCIDs, with 0 duplicate OCIDs. Coverage is 16,742/259,132 (6.46%).
 - Entity merging, prediction, lead scoring, API, and browser UI are not implemented.
+- A reusable DuckDB-backed job runner now provides stable job IDs, leases, retries, append-only events, and atomic progress sidecars.
+- Document downloads and document parsing use the reusable runner in new or resumed runs. Existing run directories remain unchanged.
 
 ## Immediate next work
 
@@ -74,6 +77,7 @@ Overall status: Foundation complete. Discovery layer viable. Gold-set evaluation
 5. Create a small reviewed retrieval challenge set from fixtures and current-source candidates.
 6. Compare title-only, title-plus-description, category, and full-metadata retrieval against the set.
 7. Resume the historical promotion child run only after the document review gate is defined.
+8. Migrate Kenya source enrichment to the reusable runner and compare a child run with the existing ledger behavior.
 
 ## Queued cleanup tasks
 
