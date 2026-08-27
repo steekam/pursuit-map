@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import zipfile
+import duckdb
 from importlib.metadata import PackageNotFoundError, version
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .provenance import sha256_file, utc_now
+from .job_runner import DurableJobRunner, JobOutcome, RunnerPolicy
 
 
 PARSER_NAME = "docling"
@@ -188,8 +190,16 @@ def parse_run(run_root: Path, *, limit: int | None = None, skip_hashes: tuple[st
     progress_path.write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
     failures = []
     converter = _make_converter(enable_ocr=enable_ocr) if pending else None
-    for index, document in enumerate(pending):
-        document_hash = sha256_file(document.path)
+    runner_connection = duckdb.connect(str(run_root / "document_jobs.duckdb"))
+    runner = DurableJobRunner(runner_connection, run_root.name, policy=RunnerPolicy(max_attempts=1, jitter_seconds=0), sleeper=lambda _: None, randomizer=lambda: 0)
+    selected = pending[:limit] if limit is not None else pending
+    documents_by_hash = {sha256_file(document.path): document for document in selected}
+    for document_hash in documents_by_hash:
+        runner.add(document_hash, {"document_hash": document_hash})
+
+    def handler(payload: dict) -> JobOutcome:
+        document_hash = payload["document_hash"]
+        document = documents_by_hash[document_hash]
         try:
             documents = [document]
             if zipfile.is_zipfile(document.path):
@@ -208,10 +218,17 @@ def parse_run(run_root: Path, *, limit: int | None = None, skip_hashes: tuple[st
         except Exception as error:
             failures.append({"document_hash": document_hash, "path": str(document.path), "error_type": type(error).__name__, "error": str(error)})
             progress["failed"] += 1
-        progress.update({"processed": index + 1, "remaining": len(pending) - index - 1, "current_hash": document_hash, "updated_at": utc_now()})
+            outcome = JobOutcome(status="failed", error_class=type(error).__name__, error_message=str(error))
+        else:
+            outcome = JobOutcome()
+        progress["processed"] += 1
+        progress.update({"remaining": len(selected) - progress["processed"], "current_hash": document_hash, "updated_at": utc_now()})
         progress_path.write_text(json.dumps(progress, indent=2) + "\n", encoding="utf-8")
-        if limit is not None and index + 1 >= limit:
-            break
+        return outcome
+
+    if selected:
+        runner.run(handler, progress_path=run_root / "document_runner_progress.json")
+    runner_connection.close()
     if failures:
         (run_root / "document_extraction_failures.json").write_text(json.dumps(failures, indent=2) + "\n", encoding="utf-8")
     complete = progress["processed"] == len(pending)
