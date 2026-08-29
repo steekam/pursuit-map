@@ -5,7 +5,7 @@ import json
 import duckdb
 
 from pursuitmap.http_client import HttpResult
-from pursuitmap.sa_api_supervisor import _classify, _fetch_job, _job_id, _setup
+from pursuitmap.sa_api_supervisor import CAPACITY_LEVELS, _classify, _fetch_job, _job_id, _setup
 
 
 def test_job_id_is_deterministic_and_scoped():
@@ -44,3 +44,7 @@ def test_fetch_job_uses_shared_http_result_and_validates_ocid():
     assert result["state"] == "succeeded"
     assert result["transport_attempts"] == 2
     assert result["waited"] == 3.5
+
+
+def test_capacity_probe_includes_controlled_level_eight():
+    assert CAPACITY_LEVELS[-1] == 8

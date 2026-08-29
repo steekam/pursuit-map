@@ -75,6 +75,16 @@ mise exec -- uv run pursuitmap sa-api-supervise report --run-id <run-id>
 
 The measured setting applies to exact detail requests. Monthly and paginated list requests use the lower source policy recorded in the capacity probe report.
 
+For a stopped exact-detail run, use a shorter timeout. The supervisor tests concurrency 8 and keeps the highest healthy level:
+
+```bash
+mise exec -- uv run pursuitmap sa-api-supervise resume \
+  --run-id <supervisor-run-id> \
+  --rate 3 \
+  --timeout 30 \
+  --max-concurrency 8
+```
+
 ## Flush permanent failures
 
 Requeue approved transient failure classes:

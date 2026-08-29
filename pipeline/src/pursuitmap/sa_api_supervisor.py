@@ -17,7 +17,7 @@ from .http_client import HttpClient, HttpPolicy
 
 
 RETRY_STATUSES = {408, 425, 429, 500, 502, 503, 504}
-CAPACITY_LEVELS = (1, 2, 4)
+CAPACITY_LEVELS = (1, 2, 4, 8)
 MAX_ATTEMPTS = 6
 ZERO_YIELD_LIMIT = 3
 FLUSHABLE_FAILURES = frozenset({"http_408", "http_425", "http_429", "http_500", "http_502", "http_503", "http_504", "TimeoutError", "URLError", "ConnectionError", "LeaseRecovery"})
