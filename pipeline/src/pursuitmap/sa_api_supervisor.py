@@ -30,10 +30,12 @@ def _job_id(run_id: str, probe: str, key: str) -> str:
 def _setup(c: duckdb.DuckDBPyConnection) -> None:
     c.execute("CREATE SEQUENCE IF NOT EXISTS supervisor_event_seq START 1")
     c.execute("CREATE TABLE IF NOT EXISTS supervisor_jobs (job_id VARCHAR PRIMARY KEY, run_id VARCHAR, parent_run_id VARCHAR, probe_family VARCHAR, endpoint VARCHAR, request_json VARCHAR, expected_ocid VARCHAR, status VARCHAR, attempts INTEGER, http_status INTEGER, response_hash VARCHAR, response_path VARCHAR, error_class VARCHAR, error_message VARCHAR, created_at VARCHAR, updated_at VARCHAR)")
-    c.execute("CREATE TABLE IF NOT EXISTS supervisor_events (event_id BIGINT, job_id VARCHAR, attempt INTEGER, state VARCHAR, http_status INTEGER, retryable BOOLEAN, wait_seconds DOUBLE, error_class VARCHAR, error_message VARCHAR, response_hash VARCHAR, created_at VARCHAR)")
+    c.execute("CREATE TABLE IF NOT EXISTS supervisor_events (event_id BIGINT, job_id VARCHAR, attempt INTEGER, state VARCHAR, http_status INTEGER, retryable BOOLEAN, wait_seconds DOUBLE, error_class VARCHAR, error_message VARCHAR, response_hash VARCHAR, created_at VARCHAR, elapsed_seconds DOUBLE, transport_attempts INTEGER)")
     c.execute("CREATE TABLE IF NOT EXISTS supervisor_probe_results (probe_id VARCHAR PRIMARY KEY, run_id VARCHAR, probe_family VARCHAR, endpoint VARCHAR, request_json VARCHAR, status VARCHAR, observed_count INTEGER, new_canonical_count INTEGER, response_hash VARCHAR, response_path VARCHAR, error_class VARCHAR, created_at VARCHAR)")
     c.execute("CREATE TABLE IF NOT EXISTS supervisor_capacity_tests (test_id VARCHAR PRIMARY KEY, run_id VARCHAR, concurrency INTEGER, requested INTEGER, succeeded INTEGER, http_429 INTEGER, http_5xx INTEGER, timeouts INTEGER, elapsed_seconds DOUBLE, requests_per_minute DOUBLE, selected BOOLEAN, created_at VARCHAR)")
     c.execute("CREATE TABLE IF NOT EXISTS supervisor_matches (match_id VARCHAR PRIMARY KEY, run_id VARCHAR, parent_run_id VARCHAR, ocid VARCHAR, source_kind VARCHAR, probe_family VARCHAR, response_hash VARCHAR, response_path VARCHAR, validation_status VARCHAR, observed_ocid VARCHAR, created_at VARCHAR)")
+    c.execute("ALTER TABLE supervisor_events ADD COLUMN IF NOT EXISTS elapsed_seconds DOUBLE")
+    c.execute("ALTER TABLE supervisor_events ADD COLUMN IF NOT EXISTS transport_attempts INTEGER")
 
 
 def _progress(c: duckdb.DuckDBPyConnection, root: Path, run_id: str, stage: str, **extra) -> None:
@@ -210,7 +212,7 @@ def run(run_id: str, *, timeout: int = 90, rate: float = 1.0, max_concurrency: i
         for result in _run_pool(jobs, client, selected):
             attempt = c.execute("SELECT attempts FROM supervisor_jobs WHERE job_id=?", [result["job_id"]]).fetchone()[0] + 1
             c.execute("UPDATE supervisor_jobs SET status=?, attempts=?, http_status=?, response_hash=?, error_class=?, error_message=?, updated_at=? WHERE job_id=?", [result["state"], attempt, result["status"], result["digest"], result["error_class"], result["error_message"], utc_now(), result["job_id"]])
-            c.execute("INSERT INTO supervisor_events VALUES (nextval('supervisor_event_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [result["job_id"], attempt, result["state"], result["status"], result["retryable"], result["waited"], result["error_class"], result["error_message"], result["digest"], utc_now()])
+            c.execute("INSERT INTO supervisor_events VALUES (nextval('supervisor_event_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [result["job_id"], attempt, result["state"], result["status"], result["retryable"], result["waited"], result["error_class"], result["error_message"], result["digest"], utc_now(), result["elapsed"], result["transport_attempts"]])
             if result["state"] == "succeeded":
                 _write_match(c, run_id, parent_run_id, result, root)
         _progress(c, root, run_id, "exact_ocid", parent_run_id=parent_run_id, selected_concurrency=selected)
@@ -228,7 +230,8 @@ def _materialize(c, root: Path, run_id: str, parent_run_id: str, source_sha: str
     total = c.execute("SELECT count(DISTINCT ocid) FROM read_parquet(?)", [canonical]).fetchone()[0]
     matched = c.execute("SELECT count(DISTINCT ocid) FROM supervisor_matches WHERE run_id=? AND validation_status IN ('validated','bulk_observation','cache_hit')", [run_id]).fetchone()[0]
     jobs = {r[0]: r[1] for r in c.execute("SELECT status,count(*) FROM supervisor_jobs WHERE run_id=? GROUP BY 1", [run_id]).fetchall()}
-    result = {"run_id": run_id, "parent_run_id": parent_run_id, "source_snapshot_sha256": source_sha, "canonical_total": total, "baseline_and_validated_matches": matched, "coverage": matched / total if total else 0, "job_counts": jobs, "requests": c.execute("SELECT count(*) FROM supervisor_events WHERE job_id IN (SELECT job_id FROM supervisor_jobs WHERE run_id=?)", [run_id]).fetchone()[0], "cache_hits": c.execute("SELECT count(*) FROM supervisor_matches WHERE run_id=? AND validation_status='cache_hit'", [run_id]).fetchone()[0], "terminal_condition": "all_jobs_terminal" if not jobs.get("pending") and not jobs.get("retryable_failed") else "work_remaining", "status": "pass" if not jobs.get("pending") and not jobs.get("retryable_failed") and not jobs.get("permanent_failed") else "warn", "outputs": {"matches": str(root / "sa_api_supervisor_matches.parquet"), "probe_results": str(root / "sa_api_supervisor_probe_results.parquet"), "capacity": str(root / "sa_api_supervisor_capacity.parquet")}}
+    latency = c.execute("SELECT coalesce(avg(elapsed_seconds), 0), coalesce(quantile_cont(elapsed_seconds, 0.95), 0), coalesce(sum(transport_attempts), 0) FROM supervisor_events WHERE job_id IN (SELECT job_id FROM supervisor_jobs WHERE run_id=?)", [run_id]).fetchone()
+    result = {"run_id": run_id, "parent_run_id": parent_run_id, "source_snapshot_sha256": source_sha, "canonical_total": total, "baseline_and_validated_matches": matched, "coverage": matched / total if total else 0, "job_counts": jobs, "requests": c.execute("SELECT count(*) FROM supervisor_events WHERE job_id IN (SELECT job_id FROM supervisor_jobs WHERE run_id=?)", [run_id]).fetchone()[0], "cache_hits": c.execute("SELECT count(*) FROM supervisor_matches WHERE run_id=? AND validation_status='cache_hit'", [run_id]).fetchone()[0], "average_request_elapsed_seconds": latency[0], "p95_request_elapsed_seconds": latency[1], "transport_attempts": latency[2], "terminal_condition": "all_jobs_terminal" if not jobs.get("pending") and not jobs.get("retryable_failed") else "work_remaining", "status": "pass" if not jobs.get("pending") and not jobs.get("retryable_failed") and not jobs.get("permanent_failed") else "warn", "outputs": {"matches": str(root / "sa_api_supervisor_matches.parquet"), "probe_results": str(root / "sa_api_supervisor_probe_results.parquet"), "capacity": str(root / "sa_api_supervisor_capacity.parquet")}}
     (root / "sa_api_supervisor_report.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     (root / "sa_api_supervisor_report.md").write_text("# South Africa API supervisor report\n\n" + "\n".join(f"- {key}: {value}" for key, value in result.items() if key != "outputs") + "\n", encoding="utf-8")
     write_run_manifest("sa-api-supervisor", source_sha, {"report": result, "output_root": str(root)}, run=run_id, working_root=country_paths("za").working)
@@ -258,7 +261,7 @@ def flush_permanent_failures(run_id: str, reasons: tuple[str, ...] = ()) -> dict
     now = utc_now()
     for job_id, attempts, error_class in rows:
         c.execute("UPDATE supervisor_jobs SET status='retryable_failed', attempts=0, error_message='requeued by reason-based flush', updated_at=? WHERE job_id=?", [now, job_id])
-        c.execute("INSERT INTO supervisor_events VALUES (nextval('supervisor_event_seq'), ?, ?, 'requeued', ?, TRUE, 0, ?, 'requeued by reason-based flush', NULL, ?)", [job_id, attempts, error_class, now])
+        c.execute("INSERT INTO supervisor_events VALUES (nextval('supervisor_event_seq'), ?, ?, 'requeued', ?, TRUE, 0, ?, 'requeued by reason-based flush', NULL, ?, NULL, NULL)", [job_id, attempts, error_class, now])
     _progress(c, root, run_id, "flushed", flushed_count=len(rows), flushed_reasons=sorted(selected), next_action="resume")
     c.close()
     counts: dict[str, int] = {}

@@ -75,6 +75,8 @@ mise exec -- uv run pursuitmap sa-api-supervise report --run-id <run-id>
 
 The measured setting applies to exact detail requests. Monthly and paginated list requests use the lower source policy recorded in the capacity probe report.
 
+The supervisor refills worker slots as requests finish. A slow request no longer blocks the next batch from starting. Reports record request elapsed time and transport-attempt counts for later tuning.
+
 For a stopped exact-detail run, use a shorter timeout. The supervisor tests concurrency 8 and keeps the highest healthy level:
 
 ```bash

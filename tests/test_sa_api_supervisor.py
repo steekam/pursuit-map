@@ -30,6 +30,8 @@ def test_supervisor_ledger_has_required_tables(tmp_path):
         "supervisor_matches",
         "supervisor_probe_results",
     }
+    columns = {row[0] for row in connection.execute("DESCRIBE supervisor_events").fetchall()}
+    assert {"elapsed_seconds", "transport_attempts"}.issubset(columns)
     connection.close()
 
 
