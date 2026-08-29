@@ -121,7 +121,9 @@ def _classify(error: Exception | None, status: int | None, attempt: int) -> tupl
 
 def _fetch_job(job: tuple, client: HttpClient) -> dict:
     job_id, ocid, url, attempts = job
+    started = time.monotonic()
     result = client.request(url)
+    elapsed = time.monotonic() - started
     digest = _sha256(result.body) if result.body else None
     if result.status == 200:
         try:
@@ -131,10 +133,29 @@ def _fetch_job(job: tuple, client: HttpClient) -> dict:
             if release.get("ocid") != ocid or not release.get("id") or not isinstance(release.get("tender"), dict):
                 raise ValueError("source_record_mismatch_or_invalid_release")
         except (json.JSONDecodeError, ValueError) as error:
-            return {"job_id": job_id, "ocid": ocid, "status": 200, "headers": result.headers, "payload": result.body, "digest": digest, "waited": result.wait_seconds, "state": "permanent_failed", "retryable": False, "error_class": "malformed_json" if isinstance(error, json.JSONDecodeError) else str(error), "error_message": str(error), "transport_attempts": result.attempts}
-        return {"job_id": job_id, "ocid": ocid, "status": 200, "headers": result.headers, "payload": result.body, "digest": digest, "waited": result.wait_seconds, "state": "succeeded", "retryable": False, "error_class": None, "error_message": None, "transport_attempts": result.attempts}
+            return {"job_id": job_id, "ocid": ocid, "status": 200, "headers": result.headers, "payload": result.body, "digest": digest, "waited": result.wait_seconds, "elapsed": elapsed, "state": "permanent_failed", "retryable": False, "error_class": "malformed_json" if isinstance(error, json.JSONDecodeError) else str(error), "error_message": str(error), "transport_attempts": result.attempts}
+        return {"job_id": job_id, "ocid": ocid, "status": 200, "headers": result.headers, "payload": result.body, "digest": digest, "waited": result.wait_seconds, "elapsed": elapsed, "state": "succeeded", "retryable": False, "error_class": None, "error_message": None, "transport_attempts": result.attempts}
     state, retryable, error_class = _classify(None, result.status, MAX_ATTEMPTS)
-    return {"job_id": job_id, "ocid": ocid, "status": result.status, "headers": result.headers, "payload": result.body, "digest": digest, "waited": result.wait_seconds, "state": state, "retryable": retryable, "error_class": result.error_class or error_class, "error_message": result.error_message, "transport_attempts": result.attempts}
+    return {"job_id": job_id, "ocid": ocid, "status": result.status, "headers": result.headers, "payload": result.body, "digest": digest, "waited": result.wait_seconds, "elapsed": elapsed, "state": state, "retryable": retryable, "error_class": result.error_class or error_class, "error_message": result.error_message, "transport_attempts": result.attempts}
+
+
+def _run_pool(jobs: list[tuple], client: HttpClient, workers: int):
+    """Keep all worker slots filled while jobs remain."""
+    iterator = iter(jobs)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {}
+        for _ in range(min(workers, len(jobs))):
+            job = next(iterator, None)
+            if job is not None:
+                futures[pool.submit(_fetch_job, job, client)] = job
+        while futures:
+            done, _ = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_COMPLETED)
+            for future in done:
+                del futures[future]
+                yield future.result()
+                job = next(iterator, None)
+                if job is not None:
+                    futures[pool.submit(_fetch_job, job, client)] = job
 
 
 def _write_match(c, run_id, parent_run_id, result, root):
@@ -183,12 +204,10 @@ def run(run_id: str, *, timeout: int = 90, rate: float = 1.0, max_concurrency: i
         selected = level
     _progress(c, root, run_id, "exact_ocid", parent_run_id=parent_run_id, selected_concurrency=selected)
     while not stop.is_set():
-        jobs = c.execute("SELECT job_id,expected_ocid,endpoint,attempts FROM supervisor_jobs WHERE run_id=? AND status IN ('pending','retryable_failed') ORDER BY expected_ocid LIMIT ?", [run_id, selected]).fetchall()
+        jobs = c.execute("SELECT job_id,expected_ocid,endpoint,attempts FROM supervisor_jobs WHERE run_id=? AND status IN ('pending','retryable_failed') ORDER BY expected_ocid LIMIT ?", [run_id, selected * 4]).fetchall()
         if not jobs:
             break
-        with concurrent.futures.ThreadPoolExecutor(max_workers=selected) as pool:
-            results = list(pool.map(lambda job: _fetch_job(job, client), jobs))
-        for result in results:
+        for result in _run_pool(jobs, client, selected):
             attempt = c.execute("SELECT attempts FROM supervisor_jobs WHERE job_id=?", [result["job_id"]]).fetchone()[0] + 1
             c.execute("UPDATE supervisor_jobs SET status=?, attempts=?, http_status=?, response_hash=?, error_class=?, error_message=?, updated_at=? WHERE job_id=?", [result["state"], attempt, result["status"], result["digest"], result["error_class"], result["error_message"], utc_now(), result["job_id"]])
             c.execute("INSERT INTO supervisor_events VALUES (nextval('supervisor_event_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [result["job_id"], attempt, result["state"], result["status"], result["retryable"], result["waited"], result["error_class"], result["error_message"], result["digest"], utc_now()])
