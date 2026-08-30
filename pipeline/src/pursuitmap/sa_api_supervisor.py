@@ -261,7 +261,7 @@ def flush_permanent_failures(run_id: str, reasons: tuple[str, ...] = ()) -> dict
     now = utc_now()
     for job_id, attempts, error_class in rows:
         c.execute("UPDATE supervisor_jobs SET status='retryable_failed', attempts=0, error_message='requeued by reason-based flush', updated_at=? WHERE job_id=?", [now, job_id])
-        c.execute("INSERT INTO supervisor_events VALUES (nextval('supervisor_event_seq'), ?, ?, 'requeued', ?, TRUE, 0, ?, 'requeued by reason-based flush', NULL, ?, NULL, NULL)", [job_id, attempts, error_class, now])
+        c.execute("INSERT INTO supervisor_events VALUES (nextval('supervisor_event_seq'), ?, ?, 'requeued', NULL, TRUE, 0, ?, 'requeued by reason-based flush', NULL, ?, NULL, NULL)", [job_id, attempts, error_class, now])
     _progress(c, root, run_id, "flushed", flushed_count=len(rows), flushed_reasons=sorted(selected), next_action="resume")
     c.close()
     counts: dict[str, int] = {}
